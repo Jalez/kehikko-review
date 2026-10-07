@@ -1,0 +1,214 @@
+@import 'tailwindcss';
+
+/*
+ * shadcn's tokens at shadcn's names, neutral, in two palettes. The host's theme
+ * arrives in the context and `use-kehikot.ts` sets `.dark` or `.light` on
+ * <html>; unframed, the system preference decides.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --radius: 0.5rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.2 0 0);
+  --card: oklch(0.98 0 0);
+  --card-foreground: oklch(0.2 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0 0);
+  --primary: oklch(0.2 0 0);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.95 0 0);
+  --secondary-foreground: oklch(0.2 0 0);
+  --muted: oklch(0.95 0 0);
+  --muted-foreground: oklch(0.5 0 0);
+  --accent: oklch(0.94 0 0);
+  --accent-foreground: oklch(0.2 0 0);
+  --destructive: oklch(0.58 0.2 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.9 0 0);
+  --input: oklch(0.87 0 0);
+  --ring: oklch(0.65 0 0);
+  /*
+   * The diff's two washes and their marks. Hue is the SECOND channel: every
+   * added row also starts `+` and every removed one `-`, in the text, so a
+   * reader who cannot separate these two hues loses nothing.
+   */
+  --add: oklch(0.93 0.06 150);
+  --add-mark: oklch(0.5 0.13 150);
+  --del: oklch(0.93 0.06 25);
+  --del-mark: oklch(0.53 0.16 25);
+  --gutter: oklch(0.55 0.02 260);
+  /* A line picked out to be commented on, and a comment an agent drafted. */
+  --pick: oklch(0.9 0.09 250);
+  --agent: oklch(0.55 0.15 300);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.92 0 0);
+    --card: oklch(0.16 0 0);
+    --card-foreground: oklch(0.92 0 0);
+    --popover: oklch(0.16 0 0);
+    --popover-foreground: oklch(0.92 0 0);
+    --primary: oklch(0.92 0 0);
+    --primary-foreground: oklch(0.16 0 0);
+    --secondary: oklch(0.24 0 0);
+    --secondary-foreground: oklch(0.92 0 0);
+    --muted: oklch(0.24 0 0);
+    --muted-foreground: oklch(0.62 0 0);
+    --accent: oklch(0.26 0 0);
+    --accent-foreground: oklch(0.92 0 0);
+    --destructive: oklch(0.66 0.16 27);
+    --border: oklch(0.26 0 0);
+    --input: oklch(0.28 0 0);
+    --ring: oklch(0.5 0 0);
+    --add: oklch(0.28 0.05 150);
+    --add-mark: oklch(0.78 0.15 150);
+    --del: oklch(0.28 0.06 25);
+    --del-mark: oklch(0.75 0.15 25);
+    --gutter: oklch(0.6 0.02 260);
+    --pick: oklch(0.36 0.09 250);
+    --agent: oklch(0.75 0.13 300);
+  }
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.92 0 0);
+  --card: oklch(0.16 0 0);
+  --card-foreground: oklch(0.92 0 0);
+  --popover: oklch(0.16 0 0);
+  --popover-foreground: oklch(0.92 0 0);
+  --primary: oklch(0.92 0 0);
+  --primary-foreground: oklch(0.16 0 0);
+  --secondary: oklch(0.24 0 0);
+  --secondary-foreground: oklch(0.92 0 0);
+  --muted: oklch(0.24 0 0);
+  --muted-foreground: oklch(0.62 0 0);
+  --accent: oklch(0.26 0 0);
+  --accent-foreground: oklch(0.92 0 0);
+  --destructive: oklch(0.66 0.16 27);
+  --border: oklch(0.26 0 0);
+  --input: oklch(0.28 0 0);
+  --ring: oklch(0.5 0 0);
+  --add: oklch(0.28 0.05 150);
+  --add-mark: oklch(0.78 0.15 150);
+  --del: oklch(0.28 0.06 25);
+  --del-mark: oklch(0.75 0.15 25);
+  --gutter: oklch(0.6 0.02 260);
+  --pick: oklch(0.36 0.09 250);
+  --agent: oklch(0.75 0.13 300);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-add: var(--add);
+  --color-add-mark: var(--add-mark);
+  --color-del: var(--del);
+  --color-del-mark: var(--del-mark);
+  --color-gutter: var(--gutter);
+  --color-pick: var(--pick);
+  --color-agent: var(--agent);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html,
+  body {
+    background: var(--background);
+    color: var(--foreground);
+  }
+  /* The container is the viewport: size things with container queries (@sm:…),
+     because a frame on a canvas is resized by the person, not the window. */
+  body {
+    container: container / inline-size;
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+
+  /*
+   * Prose wraps; code does not. A branch name, a URL out of a tracker or a
+   * commit title somebody typed is the one thing that would otherwise widen
+   * the page past its frame, and breaking it keeps the whole string on screen
+   * rather than clipping it without saying so.
+   */
+  p,
+  li,
+  summary,
+  h1,
+  h2,
+  label {
+    overflow-wrap: anywhere;
+  }
+}
+
+/*
+ * One file's body: the scroll container, and the only place in this app where
+ * anything is allowed to be wider than the frame.
+ *
+ * `width: max-content` on the rows rather than on this element: the scroller is
+ * the frame's width and scrolls, and its rows are as wide as the longest line.
+ * The other way round — a wide box inside a narrow one — is what pushes a page
+ * past its frame.
+ *
+ * It is also a size container, for `.diff-inset` below.
+ */
+.diff-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  container-type: inline-size;
+}
+
+.diff-row {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  white-space: pre;
+  font-variant-ligatures: none;
+  /* A tab that renders eight columns wide destroys a narrow frame. Two is
+     enough to see the indent. */
+  tab-size: 2;
+}
+
+/*
+ * A comment or a composer, drawn between two rows of a diff.
+ *
+ * It sits INSIDE the horizontal scroller, because it belongs under one
+ * particular line — and a scroller's content is as wide as its longest row, so
+ * a block in it would be thousands of pixels wide and its text would run off
+ * to the right with the code. So it is exactly as wide as the scroller's own
+ * box (`100cqw`, measured against `.diff-scroll`) and `sticky` to its left
+ * edge: scroll the code sideways and the comment stays where it can be read,
+ * still under its line.
+ */
+.diff-inset {
+  position: sticky;
+  left: 0;
+  width: 100cqw;
+  max-width: 100cqw;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
