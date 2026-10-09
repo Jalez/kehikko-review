@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
-import { HostRefused, resetServerStanding } from 'kehikot-module-protocol/client'
+import { HostRefused, PAGE_OLD, resetServerStanding } from 'kehikot-module-protocol/client'
 
 import type { Report } from '../review/send.ts'
 import { emptyDraft } from '../review/draft.ts'
@@ -654,14 +654,14 @@ describe('typed words are held across a reload, aimed at what they were typed on
 
   test('a write that was refused leaves the words in the box and held', async () => {
     const made = fakeApi()
-    made.api.addComment = () => Promise.reject(new Error('This page is older than its server — reloading…'))
+    made.api.addComment = () => Promise.reject(new Error(PAGE_OLD))
     const view = render(<Screen host={host()} api={made.api} />)
     await waitFor(() => expect(view.container.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
     await screen.findByRole('region', { name: 'Your review' })
     fireEvent.click(screen.getByRole('button', { name: LINE }))
     fireEvent.change(box(), { target: { value: 'Pressed on a stale page.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
-    await screen.findByText('This page is older than its server — reloading…')
+    await screen.findByText(PAGE_OLD)
     expect(box().value).toBe('Pressed on a stale page.')
     expect(held()).toHaveLength(1)
     await reload()
