@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { changed, useHolding } from './holding.ts'
+
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { Confirmed } from '@/wire/api'
@@ -68,11 +70,20 @@ export function ReviewPanel({
   onConfirming(): void
   onSend(confirmed: Confirmed): Promise<Report>
 }) {
-  const [summary, setSummary] = useState(draft.summary)
+  /*
+   * The summary is saved when the box is left, so words typed and not yet left are only here — and
+   * a page that reloads under them (it does, when it finds it is older than its server) would lose
+   * them. They are held as they are typed (`store/held.ts`) and come back in the box, still
+   * counted as unsaved, so the next blur or Send saves them.
+   */
+  const holding = useHolding()
+  const heldSummary = useRef(changed(holding.read('summary'))).current
+  const [summaryFrom, setSummaryFrom] = useState<string | null>(heldSummary?.base ?? null)
+  const [summary, setSummary] = useState(heldSummary?.text ?? draft.summary)
   /* Whether the box holds words the server has not got yet. While it does, a
      re-read of the draft (the slow interval, an agent's write) must not replace
      what the person is in the middle of typing. */
-  const dirty = useRef(false)
+  const dirty = useRef(heldSummary !== null)
   useEffect(() => {
     if (!dirty.current) setSummary(draft.summary)
   }, [draft.summary])
@@ -101,6 +112,8 @@ export function ReviewPanel({
     if (!dirty.current) return
     await onSummary(summary)
     dirty.current = false
+    holding.keep('summary', null)
+    setSummaryFrom(null)
   }
 
   const begin = () => {
@@ -180,6 +193,9 @@ export function ReviewPanel({
         onChange={(event) => {
           dirty.current = true
           setSummary(event.target.value)
+          const base = summaryFrom ?? draft.summary
+          if (summaryFrom === null) setSummaryFrom(base)
+          holding.keep('summary', event.target.value === base ? null : { base, text: event.target.value, aim: 'the review’s summary' })
         }}
         /* Saved when the box is left, not on every key: each save is a write to
            a file in the project, and an agent reading the draft mid-word gains
@@ -187,6 +203,13 @@ export function ReviewPanel({
         onBlur={() => void saveSummary().catch((e: unknown) => setError(say(e)))}
         className="w-full min-w-0 resize-y rounded-md border bg-background px-2 py-1 text-[0.75rem] leading-snug outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
+
+      {dirty.current && summaryFrom !== null && summaryFrom !== draft.summary ? (
+        <p data-testid="summary-stale" className="rounded-md border border-del-mark/50 bg-del px-2 py-1">
+          The saved summary was changed after these words were typed. It now says: “
+          {draft.summary.length > 160 ? `${draft.summary.slice(0, 159)}…` : draft.summary}” — leaving this box, or sending, replaces that.
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-1" role="radiogroup" aria-label="Verdict">
         {(Object.keys(VERDICT_WORD) as Verdict[]).map((verdict) => (

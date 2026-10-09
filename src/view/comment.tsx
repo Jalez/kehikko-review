@@ -6,6 +6,8 @@ import { cn } from '@/lib/utils'
 
 import { MAX_BODY, short, type Comment } from '../../review/shape.ts'
 
+import { changed, useHolding } from './holding.ts'
+
 /** The small button every control in a narrow frame uses: a target, not a billboard. */
 export const SMALL = 'h-6 px-2 text-[0.7rem]'
 
@@ -26,6 +28,7 @@ export function Composer({
   saveLabel,
   onSave,
   onCancel,
+  held,
 }: {
   /** What the box is for, said to a screen reader and shown above it: "Comment on new line 12". */
   label: string
@@ -33,8 +36,20 @@ export function Composer({
   saveLabel: string
   onSave(body: string): Promise<void>
   onCancel(): void
+  /**
+   * Where these words are held while they are typed, so a reload of the page finds them: the
+   * target they are aimed at, and that aim in words. Absent, nothing is held.
+   */
+  held?: { target: string; aim: string }
 }) {
-  const [body, setBody] = useState(initial)
+  const holding = useHolding()
+  /* What was there when the typing started: the comment's own words for a reword, nothing for a new one. */
+  const was = useRef(held ? changed(holding.read(held.target)) : null).current
+  const base = was?.base ?? initial
+  const keep = (text: string | null) => {
+    if (held) holding.keep(held.target, text === null || !text.trim() || text === base ? null : { base, text, aim: held.aim })
+  }
+  const [body, setBody] = useState(was?.text ?? initial)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const box = useRef<HTMLTextAreaElement>(null)
@@ -50,11 +65,19 @@ export function Composer({
     setSaving(true)
     setError(null)
     onSave(body)
+      /* Kept by the store: there is nothing left to hold. A refusal leaves the words held, and in the box. */
+      .then(() => keep(null))
       /* On success the parent unmounts this; nothing to reset. */
       .catch((e: unknown) => {
         setError(say(e))
         setSaving(false)
       })
+  }
+
+  /* Cancel is throwing the words away on purpose, the held copy with them. */
+  const cancel = () => {
+    keep(null)
+    onCancel()
   }
 
   return (
@@ -69,23 +92,32 @@ export function Composer({
         maxLength={MAX_BODY}
         rows={3}
         disabled={saving}
-        onChange={(event) => setBody(event.target.value)}
+        onChange={(event) => {
+          setBody(event.target.value)
+          keep(event.target.value)
+        }}
         onKeyDown={(event) => {
           /* Enter is a newline in a comment, so saving is the chord every
              tracker's own box uses. Escape abandons only an empty box: losing
              a paragraph to a stray key is worse than pressing Cancel. */
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) save()
-          if (event.key === 'Escape' && !body.trim()) onCancel()
+          if (event.key === 'Escape' && !body.trim()) cancel()
         }}
         className="w-full min-w-0 resize-y rounded-md border bg-background px-2 py-1 font-sans text-[0.75rem] leading-snug outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
+      {was && was.base !== initial ? (
+        <p data-testid="held-stale" className="rounded-md border border-del-mark/50 bg-del px-2 py-1">
+          This comment was changed after these words were typed. It now says: “{initial.length > 160 ? `${initial.slice(0, 159)}…` : initial}” — saving
+          replaces that.
+        </p>
+      ) : null}
       {error ? (
         <p role="alert" className="rounded-md border border-del-mark/50 bg-del px-2 py-1">
           {error}
         </p>
       ) : null}
       <div className="flex flex-wrap items-center justify-end gap-1">
-        <Button type="button" variant="ghost" size="sm" className={SMALL} onClick={onCancel} disabled={saving}>
+        <Button type="button" variant="ghost" size="sm" className={SMALL} onClick={cancel} disabled={saving}>
           Cancel
         </Button>
         <Button type="button" size="sm" className={SMALL} onClick={save} disabled={saving || !body.trim()}>
@@ -142,7 +174,13 @@ export function CommentCard({
   onDrop(id: string): Promise<void>
   onJump?: () => void
 }) {
-  const [editing, setEditing] = useState(false)
+  /*
+   * A reword somebody was in the middle of when the page reloaded reopens — in the review panel's
+   * copy of the card (the one with `where`), which is drawn whatever the diff is showing; the copy
+   * beside the line is the same comment and would be a second box over the same words.
+   */
+  const holding = useHolding()
+  const [editing, setEditing] = useState(() => where !== undefined && changed(holding.read(`reword:${comment.id}`)) !== null)
   /* Remove takes two presses. `confirm()` is not available to a framed page,
      and one press on a small button in a narrow frame is too easy to make by
      accident for something that deletes a paragraph. */
@@ -157,6 +195,7 @@ export function CommentCard({
         saveLabel="Save"
         onSave={(body) => onReword(comment.id, body).then(() => setEditing(false))}
         onCancel={() => setEditing(false)}
+        held={{ target: `reword:${comment.id}`, aim: `a rewording of the comment on ${place(comment)}` }}
       />
     )
   }
