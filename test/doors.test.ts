@@ -12,7 +12,7 @@ import { ID } from '../manifest.ts'
 import type { Report } from '../review/send.ts'
 import type { Draft } from '../review/shape.ts'
 
-import { through } from './through-doors.ts'
+import { doorsFetch } from 'kehikot-module-protocol/serve'
 import { FIRST, GH_URL, HEAD, PATCH, fake, githubReads, isPost, refused, sentBody } from './fake.ts'
 
 /**
@@ -131,32 +131,36 @@ describe('writing through the page’s API', () => {
   test('through the doors: a write carrying x-module-ticket lands; without it, 403 marked as the ticket', async () => {
     const dir = project()
     const { deps, runner } = world()
-    const DOORS = {
+    const doors = doorsFetch({
       manifest: MANIFEST,
       build: BUILD,
       page: { title: 'Review', ticket: TICKET },
       answer: ((method, path, query, body, ticket) => answer(method, path, query, body, ticket, deps)) as typeof answer,
+    })
+    const through = async (method: string, url: string, { body, headers }: { body?: unknown; headers?: Record<string, string> } = {}) => {
+      const sent = (await doors(new Request(`http://127.0.0.1${url}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })))!
+      return { status: sent.status, headers: sent.headers, json: (await sent.clone().json().catch(() => null)) as Record<string, unknown>, text: await sent.text() }
     }
-    const bare = await through(DOORS, 'POST', '/api/comment', { body: comment(dir) })
+    const bare = await through('POST', '/api/comment', { body: comment(dir) })
     expect(bare.status).toBe(403)
-    expect(bare.json().refused).toBe('ticket')
-    expect(String(bare.json().error)).toContain('own page')
+    expect(bare.json.refused).toBe('ticket')
+    expect(String(bare.json.error)).toContain('own page')
     expect(runner.calls).toHaveLength(0)
 
-    const sent = await through(DOORS, 'POST', '/api/comment', { body: comment(dir), headers: { 'x-module-ticket': TICKET } })
+    const sent = await through('POST', '/api/comment', { body: comment(dir), headers: { 'x-module-ticket': TICKET } })
     expect(sent.status).toBe(200)
-    expect((sent.json().draft as Draft).comments).toHaveLength(1)
+    expect((sent.json.draft as Draft).comments).toHaveLength(1)
     /* A draft is re-read on purpose; a cached answer would be an agent's comment that never appears. */
-    expect(sent.headers['cache-control']).toBe('no-store')
-    expect(sent.headers['x-module-build']).toBeTruthy()
+    expect(sent.headers.get('cache-control')).toBe('no-store')
+    expect(sent.headers.get('x-module-build')).toBeTruthy()
 
-    const page = await through(DOORS, 'GET', '/app')
+    const page = await through('GET', '/app')
     expect(page.text).toContain(`<script id="ticket" type="application/json">${JSON.stringify(TICKET)}</script>`)
     expect(page.text).toContain('<script id="build" type="application/json">')
-    expect(page.headers['cache-control']).toBe('no-store')
-    const health = await through(DOORS, 'GET', '/healthz')
-    expect((health.json().build as { version: string }).version).toBe(BUILD.version)
-    expect(health.json().id).toBe(ID)
+    expect(page.headers.get('cache-control')).toBe('no-store')
+    const health = await through('GET', '/healthz')
+    expect((health.json.build as { version: string }).version).toBe(BUILD.version)
+    expect(health.json.id).toBe(ID)
   })
 
   test('every write, and the send, needs this page’s ticket — and without it nothing is even read', async () => {

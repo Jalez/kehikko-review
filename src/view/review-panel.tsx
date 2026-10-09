@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { changed, useHolding } from './holding.ts'
+import { useHolding } from './holding.ts'
 
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -73,11 +73,11 @@ export function ReviewPanel({
   /*
    * The summary is saved when the box is left, so words typed and not yet left are only here — and
    * a page that reloads under them (it does, when it finds it is older than its server) would lose
-   * them. They are held as they are typed (`store/held.ts`) and come back in the box, still
+   * them. They are held as they are typed (`holding.ts`) and come back in the box, still
    * counted as unsaved, so the next blur or Send saves them.
    */
   const holding = useHolding()
-  const heldSummary = useRef(changed(holding.read('summary'))).current
+  const heldSummary = useRef(holding.read('summary')).current
   const [summaryFrom, setSummaryFrom] = useState<string | null>(heldSummary?.base ?? null)
   const [summary, setSummary] = useState(heldSummary?.text ?? draft.summary)
   /* Whether the box holds words the server has not got yet. While it does, a
@@ -195,7 +195,7 @@ export function ReviewPanel({
           setSummary(event.target.value)
           const base = summaryFrom ?? draft.summary
           if (summaryFrom === null) setSummaryFrom(base)
-          holding.keep('summary', event.target.value === base ? null : { base, text: event.target.value, aim: 'the review’s summary' })
+          holding.keep('summary', { base, text: event.target.value, aim: 'the review’s summary' })
         }}
         /* Saved when the box is left, not on every key: each save is a write to
            a file in the project, and an agent reading the draft mid-word gains

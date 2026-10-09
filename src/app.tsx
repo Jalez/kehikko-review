@@ -1,12 +1,13 @@
 import { useState } from 'react'
 
-import { Cover, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
+import { probeServer } from 'kehikot-module-protocol/client'
+import { Cover, coverFor, useServerStanding } from 'kehikot-module-protocol/client/react'
 
 import { Button } from '@/components/ui/button'
 import { current, type Seen } from '@/live/changes'
 import { useChanges } from '@/live/use-changes'
 import { ChangeReview } from '@/view/change-review'
-import { api as realApi, knock, type Api } from '@/wire/api'
+import { api as realApi, type Api } from '@/wire/api'
 import { useKehikot, type Host } from '@/wire/use-kehikot'
 
 export function App() {
@@ -59,21 +60,9 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
   const changes = host.selection.filter((ref) => Object.hasOwn(seen, ref) && seen[ref]?.at === 'change')
   const others = host.selection.filter((ref) => !changes.includes(ref))
 
-  /*
-   * Which cover, if any. Not `coverFor`: that helper says "unhosted" only for a module that needs a
-   * project, and this one reads a diff without one — what it needs is a selection, which is its own
-   * sentence below.
-   */
-  const cover: CoverState | null =
-    server === 'stale'
-      ? 'stale'
-      : host.where === 'listening'
-        ? 'waiting'
-        : host.where === 'unhosted'
-          ? 'unhosted'
-          : server === 'down'
-            ? 'down'
-            : null
+  /* Which cover, if any. This module needs a host and no project: what it needs of the host is a
+     selection, which is its own sentence below. */
+  const cover = coverFor({ ...host, server }, { host: true })
 
   return (
     /* `min-w-0` and `overflow-x-hidden` on the one scroller: nothing on this
@@ -84,7 +73,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
         <Cover
           state={cover}
           name="Review"
-          onRetry={() => void knock().then(() => setRound((n) => n + 1))}
+          onRetry={() => void probeServer('./healthz').then(() => setRound((n) => n + 1))}
           /* What this module is for, which the shared sentence cannot say. */
           detail={cover === 'unhosted' ? UNHOSTED : null}
         />

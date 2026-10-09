@@ -62,12 +62,6 @@ export const BUILD = establishBuild({ version: VERSION, dir: import.meta.dirname
 
 export type { Reply }
 
-/*
- * Never cached. A draft and a diff are both things that change under the page, and the page
- * re-reads them on purpose: a cached answer would be an agent's comment that never appears.
- */
-const FRESH = { 'cache-control': 'no-store' }
-
 /**
  * What the doors reach the world through, as a value.
  *
@@ -89,8 +83,8 @@ const REAL: Deps = {
   id: () => `c-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`,
 }
 
-const ok = (body: Record<string, unknown>): Reply => ({ status: 200, body: { ok: true, ...body }, headers: FRESH })
-const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why }, headers: FRESH })
+const ok = (body: Record<string, unknown>): Reply => ({ status: 200, body: { ok: true, ...body } })
+const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why } })
 
 const str = (value: unknown, max: number): string | null => (typeof value === 'string' && value.length <= max ? value : null)
 

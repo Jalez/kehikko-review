@@ -10,8 +10,7 @@ import { short, type Comment, type Draft, type Side, type View } from '../../rev
 
 import { CommentCard, Composer } from './comment.tsx'
 import { FileSection, type Pick } from './file-diff.tsx'
-import { HoldingContext, changed, type Holding } from './holding.ts'
-import { keepDraft, readDraft, readDrafts } from '@/store/held.ts'
+import { HoldingContext, drafts, type Holding } from './holding.ts'
 import { ReviewPanel } from './review-panel.tsx'
 
 /**
@@ -40,6 +39,8 @@ type Loaded<T> = { at: 'loading' } | { at: 'error'; error: string } | { at: 'ok'
 type Showing = { view: 'all' } | { view: 'commit'; sha: string }
 
 interface Patch {
+  /** Which diff this is: the view and the commit it was read for. */
+  of: string
   files: FileDiff[]
   truncated: boolean
   empty: boolean
@@ -144,7 +145,7 @@ export function ChangeReview({
     setPatch({ at: 'loading' })
     api
       .diff(url, showing.view, sha)
-      .then((got) => live && setPatch({ at: 'ok', value: { files: parseDiff(got.text), truncated: got.truncated, empty: !got.text.trim() } }))
+      .then((got) => live && setPatch({ at: 'ok', value: { of: `${showing.view}:${sha}`, files: parseDiff(got.text), truncated: got.truncated, empty: !got.text.trim() } }))
       .catch((e: unknown) => live && setPatch({ at: 'error', error: say(e) }))
     return () => {
       live = false
@@ -209,19 +210,18 @@ export function ChangeReview({
 
   /* ---- picking lines ---- */
   /*
-   * What is being typed on this change, held across a reload of the page (`store/held.ts`), under
+   * What is being typed on this change, held across a reload of the page (the protocol's `held`), under
    * this project and this change. A stale page reloads itself — on the Save press that found it
    * out, or on the draft re-read every twenty seconds — and without this a comment half written
    * went with it.
    */
+  const here = projectPath ? drafts.at(projectPath) : null
   const holding = useMemo<Holding>(
     () => ({
-      read: (target) => (projectPath ? readDraft(projectPath, `${url}|${target}`) : null),
-      keep: (target, draft) => {
-        if (projectPath) keepDraft(projectPath, `${url}|${target}`, draft)
-      },
+      read: (target) => here?.read(`${url}|${target}`) ?? null,
+      keep: (target, draft) => here?.keep(`${url}|${target}`, draft),
     }),
-    [projectPath, url],
+    [here, url],
   )
   /** Where a new comment's words are held: the view, the commit, the file by PATH, the side and the lines. */
   const newTarget = (view: string, commit: string, path: string, at: Pick) => `new:${view}:${commit}:${at.side}:${at.start}:${at.line}:${path}`
@@ -233,7 +233,13 @@ export function ChangeReview({
   useEffect(() => setPick(null), [showing.view, sha, url])
 
   /* ---- which files are open ---- */
-  const files = patch.at === 'ok' ? patch.value.files : null
+  /*
+   * The files of the diff ON SCREEN, and of no other. For one render after the selector moves,
+   * `patch` is still the diff that was showing; a held comment reopened against that list was
+   * picked at the position its file has in the OTHER diff, and its box came back on whatever sits
+   * there in this one — open and empty, with the words held somewhere nobody could see.
+   */
+  const files = patch.at === 'ok' && patch.value.of === `${showing.view}:${sha}` ? patch.value.files : null
   const plan = useMemo(() => (files ? opening(files) : null), [files])
   const [moved, setMoved] = useState<Record<number, boolean>>({})
   useEffect(() => setMoved({}), [files])
@@ -290,10 +296,10 @@ export function ChangeReview({
    * they cannot open on another line.
    */
   useEffect(() => {
-    if (!projectPath || !sha || !files || pick) return
+    if (!here || !sha || !files || pick) return
     const prefix = `${url}|new:${showing.view}:${sha}:`
-    for (const [target, one] of Object.entries(readDrafts(projectPath))) {
-      if (!target.startsWith(prefix) || !changed(one)) continue
+    for (const target of Object.keys(here.all())) {
+      if (!target.startsWith(prefix)) continue
       const [side, start, line, ...path] = target.slice(prefix.length).split(':')
       const file = files.findIndex((f) => f.path === path.join(':'))
       if (file < 0 || (side !== 'new' && side !== 'old')) continue
@@ -301,7 +307,7 @@ export function ChangeReview({
       return
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per diff shown; `pick` is read, not followed
-  }, [projectPath, url, showing.view, sha, files])
+  }, [here, url, showing.view, sha, files])
 
   /*
    * Held words whose target is gone: a new comment on a commit that is no longer this change's
@@ -310,10 +316,10 @@ export function ChangeReview({
    * they were not aimed at or dropped.
    */
   void heldTick
-  const strays = !projectPath || change.at !== 'ok' || draft.at !== 'ok'
+  const strays = !here || change.at !== 'ok' || draft.at !== 'ok'
     ? []
-    : Object.entries(readDrafts(projectPath)).filter(([target, one]) => {
-        if (!target.startsWith(`${url}|`) || !changed(one)) return false
+    : Object.entries(here.all()).filter(([target]) => {
+        if (!target.startsWith(`${url}|`)) return false
         const rest = target.slice(url.length + 1)
         if (rest.startsWith('reword:')) return !draft.value.comments.some((c) => c.id === rest.slice('reword:'.length))
         if (!rest.startsWith('new:')) return false
@@ -405,7 +411,7 @@ export function ChangeReview({
                   size="sm"
                   className="h-auto p-0 text-[0.7rem]"
                   onClick={() => {
-                    if (projectPath) keepDraft(projectPath, target, null)
+                    here?.keep(target, null)
                     setHeldTick((n) => n + 1)
                   }}
                 >

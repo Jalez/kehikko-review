@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 
 import { MAX_BODY, short, type Comment } from '../../review/shape.ts'
 
-import { changed, useHolding } from './holding.ts'
+import { useHolding } from './holding.ts'
 
 /** The small button every control in a narrow frame uses: a target, not a billboard. */
 export const SMALL = 'h-6 px-2 text-[0.7rem]'
@@ -44,10 +44,10 @@ export function Composer({
 }) {
   const holding = useHolding()
   /* What was there when the typing started: the comment's own words for a reword, nothing for a new one. */
-  const was = useRef(held ? changed(holding.read(held.target)) : null).current
+  const was = useRef(held ? holding.read(held.target) : null).current
   const base = was?.base ?? initial
   const keep = (text: string | null) => {
-    if (held) holding.keep(held.target, text === null || !text.trim() || text === base ? null : { base, text, aim: held.aim })
+    if (held) holding.keep(held.target, text === null ? null : { base, text, aim: held.aim })
   }
   const [body, setBody] = useState(was?.text ?? initial)
   const [saving, setSaving] = useState(false)
@@ -180,7 +180,7 @@ export function CommentCard({
    * beside the line is the same comment and would be a second box over the same words.
    */
   const holding = useHolding()
-  const [editing, setEditing] = useState(() => where !== undefined && changed(holding.read(`reword:${comment.id}`)) !== null)
+  const [editing, setEditing] = useState(() => where !== undefined && holding.read(`reword:${comment.id}`) !== null)
   /* Remove takes two presses. `confirm()` is not available to a framed page,
      and one press on a small button in a narrow frame is too easy to make by
      accident for something that deletes a paragraph. */

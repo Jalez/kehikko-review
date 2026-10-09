@@ -9,8 +9,7 @@ import { ID } from '../../manifest.ts'
  *
  * A thin wrapper over the protocol's `useHost`, which is the listener, the grace,
  * the theme on <html> and the page that reloads itself when it is older than its
- * server. What is left here is this module's own: the selection held steady, the
- * tracker reading's clock, and a `Host` narrow enough that a screen can be
+ * server. What is left here is this module's own: the tracker reading's clock, and a `Host` narrow enough that a screen can be
  * rendered in a test with a plain object.
  *
  * No `onClear` or `onRefresh` is passed. `useHost` would deliver those presses
@@ -33,7 +32,7 @@ export interface Host {
    * asked for: it declares no `selection:set` and has no control that would
    * make one. What each ref IS has to be asked; see `live/changes.ts`.
    */
-  selection: string[]
+  selection: readonly string[]
   /**
    * When the host's shared tracker reading last changed. It moving is the
    * signal that something asked for earlier may have landed, and later that a
@@ -46,14 +45,9 @@ export interface Host {
 
 export function useKehikot(): Host {
   const host = useHost(ID)
-  const context = host.context
-
-  /* Joined so that a context repeating the same selection — which a host sends
-     after every click anywhere on the canvas — hands the screen the SAME array
-     and re-runs nothing that depends on it. */
-  const selectionKey = (context?.selection ?? []).join('\n')
-  const selection = useMemo(() => (selectionKey ? selectionKey.split('\n') : []), [selectionKey])
-  const trackerAt = context?.tracker?.at ?? null
+  /* `selection` is the same array for as long as the host repeats the same selection. */
+  const { selection } = host
+  const trackerAt = host.context?.tracker?.at ?? null
 
   return useMemo(
     () => ({
