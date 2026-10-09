@@ -1,10 +1,12 @@
 import { useState } from 'react'
 
+import { Cover, useServerStanding, type CoverState } from 'kehikot-module-protocol/client/react'
+
 import { Button } from '@/components/ui/button'
 import { current, type Seen } from '@/live/changes'
 import { useChanges } from '@/live/use-changes'
 import { ChangeReview } from '@/view/change-review'
-import { api as realApi, type Api } from '@/wire/api'
+import { api as realApi, knock, type Api } from '@/wire/api'
 import { useKehikot, type Host } from '@/wire/use-kehikot'
 
 export function App() {
@@ -25,6 +27,17 @@ export function App() {
  * One "no change selected" for all of them would be true every time and useful
  * none.
  *
+ * The first two — and this app's own server not answering, and this page being
+ * older than that server — are the protocol's shared `Cover`: the same mark and
+ * the same sentence every module says them with. The rest are this module's.
+ *
+ * ## What is drawn stays mounted under a cover
+ *
+ * `down` and `stale` can arrive with a half-written comment on screen. So the
+ * review is hidden under those covers rather than unmounted, and Try again asks
+ * the server and then has the review re-ask whatever of it had failed (`round`)
+ * — nothing somebody typed is thrown away to draw a sentence.
+ *
  * ## One change at a time
  *
  * A review is of one change, sent to one place, with one verdict. So of
@@ -37,26 +50,47 @@ export function App() {
 export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
   const { seen, refused } = useChanges(host)
   const [picked, setPicked] = useState<string | null>(null)
+  /* How this page's own server last answered: `down` when nothing did, `stale` when it has restarted under this page. */
+  const server = useServerStanding()
+  const [round, setRound] = useState(0)
 
   const refName = current(host.selection, seen, picked)
   const row = refName && Object.hasOwn(seen, refName) ? seen[refName] : undefined
   const changes = host.selection.filter((ref) => Object.hasOwn(seen, ref) && seen[ref]?.at === 'change')
   const others = host.selection.filter((ref) => !changes.includes(ref))
 
+  /*
+   * Which cover, if any. Not `coverFor`: that helper says "unhosted" only for a module that needs a
+   * project, and this one reads a diff without one — what it needs is a selection, which is its own
+   * sentence below.
+   */
+  const cover: CoverState | null =
+    server === 'stale'
+      ? 'stale'
+      : host.where === 'listening'
+        ? 'waiting'
+        : host.where === 'unhosted'
+          ? 'unhosted'
+          : server === 'down'
+            ? 'down'
+            : null
+
   return (
     /* `min-w-0` and `overflow-x-hidden` on the one scroller: nothing on this
        page may make it scroll sideways. A diff that is wider than the frame
        scrolls inside its own file, and everything else wraps or truncates. */
     <main className="flex h-screen min-w-0 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2 text-sm">
-      {host.where === 'listening' ? <Note>Listening for a Kehikot host…</Note> : null}
-
-      {host.where === 'unhosted' ? (
-        <Note>
-          Nothing is framing this page, so nothing can say which change is selected. Review is a module for a Kehikot canvas: place it there,
-          select a pull request or merge request, and it is shown here to be reviewed line by line.
-        </Note>
+      {cover ? (
+        <Cover
+          state={cover}
+          name="Review"
+          onRetry={() => void knock().then(() => setRound((n) => n + 1))}
+          /* What this module is for, which the shared sentence cannot say. */
+          detail={cover === 'unhosted' ? UNHOSTED : null}
+        />
       ) : null}
 
+      <div hidden={cover !== null} className={cover ? undefined : 'contents'}>
       {host.where === 'hosted' && !host.selection.length ? (
         <Note>
           Nothing is selected. Select a pull request or merge request anywhere on the canvas — in References, Journeys or any module that
@@ -101,15 +135,22 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
           hintHead={row.head}
           projectPath={host.projectPath}
           api={api}
+          round={round}
         />
       ) : null}
 
       {host.where === 'hosted' && !refused
         ? others.map((ref) => <Other key={ref} refName={ref} seen={Object.hasOwn(seen, ref) ? seen[ref] : undefined} />)
         : null}
+      </div>
     </main>
   )
 }
+
+/** The second line under the unhosted cover: what this module is, and how a change gets here. */
+export const UNHOSTED =
+  'Review is a module for a Kehikot canvas: place it there, select a pull request or merge request, and it is shown here to be '
+  + 'reviewed line by line.'
 
 function Note({ children }: { children: React.ReactNode }) {
   return <p className="text-[0.7rem] leading-4 text-muted-foreground">{children}</p>

@@ -10,6 +10,8 @@ import { short, type Comment, type Draft, type Side, type View } from '../../rev
 
 import { CommentCard, Composer } from './comment.tsx'
 import { FileSection, type Pick } from './file-diff.tsx'
+import { HoldingContext, changed, type Holding } from './holding.ts'
+import { keepDraft, readDraft, readDrafts } from '@/store/held.ts'
 import { ReviewPanel } from './review-panel.tsx'
 
 /**
@@ -74,6 +76,7 @@ export function ChangeReview({
   hintHead,
   projectPath,
   api,
+  round = 0,
 }: {
   /** The ref as selected on the canvas: `gh#46`, `!3105`. */
   refName: string
@@ -85,6 +88,8 @@ export function ChangeReview({
   hintHead: string | null
   projectPath: string | null
   api: Api
+  /** Bumped by the page when its own server is back after not answering: whatever failed here is asked again. */
+  round?: number
 }) {
   /* ---- the change ---- */
   const [change, setChange] = useState<Loaded<ChangeRead>>({ at: 'loading' })
@@ -180,6 +185,21 @@ export function ChangeReview({
   }, [reread, projectPath])
 
   /** Run a write and take the draft it answers with as the truth. */
+  /*
+   * The page's Try again, after its own server did not answer. Only what FAILED is asked again: a
+   * diff that is on screen stays on screen, and nothing typed against it is disturbed.
+   */
+  const failed = useRef({ change: false, patch: false })
+  failed.current = { change: change.at === 'error', patch: patch.at === 'error' }
+  const asked = useRef(round)
+  useEffect(() => {
+    if (round === asked.current) return
+    asked.current = round
+    if (failed.current.change) setAgain((n) => n + 1)
+    if (failed.current.patch) setPatchAgain((n) => n + 1)
+    reread()
+  }, [round, reread])
+
   const write = useCallback(async (does: () => Promise<Draft>): Promise<void> => {
     writes.current += 1
     const value = await does()
@@ -188,6 +208,25 @@ export function ChangeReview({
   }, [])
 
   /* ---- picking lines ---- */
+  /*
+   * What is being typed on this change, held across a reload of the page (`store/held.ts`), under
+   * this project and this change. A stale page reloads itself — on the Save press that found it
+   * out, or on the draft re-read every twenty seconds — and without this a comment half written
+   * went with it.
+   */
+  const holding = useMemo<Holding>(
+    () => ({
+      read: (target) => (projectPath ? readDraft(projectPath, `${url}|${target}`) : null),
+      keep: (target, draft) => {
+        if (projectPath) keepDraft(projectPath, `${url}|${target}`, draft)
+      },
+    }),
+    [projectPath, url],
+  )
+  /** Where a new comment's words are held: the view, the commit, the file by PATH, the side and the lines. */
+  const newTarget = (view: string, commit: string, path: string, at: Pick) => `new:${view}:${commit}:${at.side}:${at.start}:${at.line}:${path}`
+  const [heldTick, setHeldTick] = useState(0)
+
   const [pick, setPick] = useState<Pick | null>(null)
   /* A pick is a place in ONE diff. Changing the view changes what every number
      means, so the pick does not survive it. */
@@ -232,6 +271,8 @@ export function ChangeReview({
   }
 
   const pickLine = (file: number) => (side: Side, line: number, extend: boolean) => {
+    /* Pressing another line leaves the box that was open, as it always has; its held copy goes with it. */
+    if (pick && sha && files?.[pick.file]) holding.keep(newTarget(showing.view, sha, files[pick.file]!.path, pick), null)
     setPick((was) =>
       /* Shift extends a pick in the same column of the same file. Anything
          else starts a new one: a range across two files or two columns is not
@@ -242,12 +283,53 @@ export function ChangeReview({
     )
   }
 
+  /*
+   * A new comment that was half written when the page reloaded: its line is picked again and its
+   * box opens with the words in it — once the diff it was written on is the one on screen, and
+   * only there. The words are in the key with the view, the commit, the file and the lines, so
+   * they cannot open on another line.
+   */
+  useEffect(() => {
+    if (!projectPath || !sha || !files || pick) return
+    const prefix = `${url}|new:${showing.view}:${sha}:`
+    for (const [target, one] of Object.entries(readDrafts(projectPath))) {
+      if (!target.startsWith(prefix) || !changed(one)) continue
+      const [side, start, line, ...path] = target.slice(prefix.length).split(':')
+      const file = files.findIndex((f) => f.path === path.join(':'))
+      if (file < 0 || (side !== 'new' && side !== 'old')) continue
+      setPick({ file, side, start: Number(start), line: Number(line) })
+      return
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per diff shown; `pick` is read, not followed
+  }, [projectPath, url, showing.view, sha, files])
+
+  /*
+   * Held words whose target is gone: a new comment on a commit that is no longer this change's
+   * head (or one of its commits), on a file the diff no longer has, or a rewording of a comment
+   * that was removed. They are SHOWN, with what they were about, rather than opened somewhere
+   * they were not aimed at or dropped.
+   */
+  void heldTick
+  const strays = !projectPath || change.at !== 'ok' || draft.at !== 'ok'
+    ? []
+    : Object.entries(readDrafts(projectPath)).filter(([target, one]) => {
+        if (!target.startsWith(`${url}|`) || !changed(one)) return false
+        const rest = target.slice(url.length + 1)
+        if (rest.startsWith('reword:')) return !draft.value.comments.some((c) => c.id === rest.slice('reword:'.length))
+        if (!rest.startsWith('new:')) return false
+        const [, view, commit, , , , ...path] = rest.split(':')
+        if (view === 'all' ? commit !== head : !commits.some((c) => c.sha === commit)) return true
+        const shownHere = view === showing.view && commit === sha && files !== null
+        return shownHere && !files.some((f) => f.path === path.join(':'))
+      })
+
   const canWrite = Boolean(projectPath) && draft.at === 'ok' && sha !== null
 
   const reword = (id: string, body: string) => write(() => api.reword(projectPath!, url, id, body))
   const drop = (id: string) => write(() => api.drop(projectPath!, url, id))
 
   return (
+    <HoldingContext.Provider value={holding}>
     <section className="flex min-w-0 flex-col gap-2" data-ref={refName}>
       <header className="flex min-w-0 flex-col gap-1">
         <h2 className="text-[0.75rem] leading-4 font-semibold">
@@ -306,6 +388,35 @@ export function ChangeReview({
         ) : null}
       </header>
 
+      {strays.length ? (
+        <div data-testid="kept-words" className="flex min-w-0 flex-col gap-1 rounded-md border bg-card p-2 text-[0.7rem] leading-4">
+          <p className="text-muted-foreground">
+            Typed here and not saved. What {strays.length === 1 ? 'it was' : 'they were'} written on is no longer part of this change, so{' '}
+            {strays.length === 1 ? 'it is' : 'they are'} kept here rather than put on another line:
+          </p>
+          {strays.map(([target, one]) => (
+            <div key={target} data-kept={target} className="flex min-w-0 flex-col gap-1 rounded-md border px-2 py-1">
+              <p className="text-muted-foreground">{one.aim}</p>
+              <p className="min-w-0 whitespace-pre-wrap text-[0.75rem] leading-snug [overflow-wrap:anywhere]">{one.text}</p>
+              <p>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-[0.7rem]"
+                  onClick={() => {
+                    if (projectPath) keepDraft(projectPath, target, null)
+                    setHeldTick((n) => n + 1)
+                  }}
+                >
+                  Discard
+                </Button>
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {change.at === 'loading' ? note(`Asking ${tracker} about ${refName}…`) : null}
       {change.at === 'error' ? <Failure error={change.error} onAgain={() => setAgain((n) => n + 1)} /> : null}
 
@@ -356,6 +467,10 @@ export function ChangeReview({
                         <Composer
                           label={`Comment on ${picking.side} ${picking.start === picking.line ? `line ${picking.line}` : `lines ${picking.start}–${picking.line}`} of ${file.path}`}
                           saveLabel="Add to review"
+                          held={{
+                            target: newTarget(showing.view, sha, file.path, picking),
+                            aim: `a comment on ${picking.side} ${picking.start === picking.line ? `line ${picking.line}` : `lines ${picking.start}–${picking.line}`} of ${file.path} at ${short(sha)}`,
+                          }}
                           onCancel={() => setPick(null)}
                           onSave={(body) =>
                             write(() =>
@@ -422,6 +537,7 @@ export function ChangeReview({
         />
       ) : null}
     </section>
+    </HoldingContext.Provider>
   )
 }
 

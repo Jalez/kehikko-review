@@ -1,14 +1,15 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
-import { HostRefused } from 'kehikot-module-protocol/client'
+import { HostRefused, resetServerStanding } from 'kehikot-module-protocol/client'
 
 import type { Report } from '../review/send.ts'
 import { emptyDraft } from '../review/draft.ts'
 import { changeOf, type Comment, type Draft } from '../review/shape.ts'
 import { locate } from '../forge/locate.ts'
-import { Screen } from '../src/app.tsx'
-import type { Api, ChangeRead, CommentInput, Confirmed } from '../src/wire/api.ts'
+import { App, Screen, UNHOSTED } from '../src/app.tsx'
+import { keepDraft, readDrafts } from '../src/store/held.ts'
+import { api as realApi, type Api, type ChangeRead, type CommentInput, type Confirmed } from '../src/wire/api.ts'
 import type { Host } from '../src/wire/use-kehikot.ts'
 
 import { COMMIT_PATCH, FIRST, GH_URL, HEAD, MERGE_BASE, PATCH } from './fake.ts'
@@ -21,6 +22,8 @@ import { COMMIT_PATCH, FIRST, GH_URL, HEAD, MERGE_BASE, PATCH } from './fake.ts'
  * its argument — so the test of the Send button cannot send anything.
  */
 afterEach(cleanup)
+/* Every test is a new tab: what one typed and left in a box is not the next one's to find. */
+afterEach(() => sessionStorage.clear())
 
 const AT = '2026-10-07T10:00:00.000Z'
 const target = locate(GH_URL)!
@@ -152,16 +155,24 @@ async function opened(start: Partial<Draft> = {}, over: Partial<Host> = {}) {
 describe('when there is no change to review, the page says which absence it is', () => {
   test('nothing is framing it', () => {
     render(<Screen host={host({ where: 'unhosted', selection: [], projectPath: null, project: null, epic: null })} api={fakeApi().api} />)
-    expect(screen.getByText(/Nothing is framing this page/)).toBeTruthy()
+    const cover = document.querySelector('[data-cover]')
+    expect(cover?.getAttribute('data-cover')).toBe('unhosted')
+    expect(cover?.textContent).toContain('Nothing is framing this page — open Review in Kehikot.')
+    /* What this module is for, under the shared sentence. */
+    expect(cover?.textContent).toContain(UNHOSTED)
+    expect(UNHOSTED).toContain('select a pull request or merge request')
+    expect(screen.queryByText(/Nothing is selected/)).toBeNull()
   })
 
   test('it is still listening for a host', () => {
     render(<Screen host={host({ where: 'listening', selection: [] })} api={fakeApi().api} />)
-    expect(screen.getByText('Listening for a Kehikot host…')).toBeTruthy()
+    expect(document.querySelector('[data-cover]')?.getAttribute('data-cover')).toBe('waiting')
+    expect(screen.getByText('Waiting for Kehikot…')).toBeTruthy()
   })
 
   test('nothing is selected', () => {
     render(<Screen host={host({ selection: [] })} api={fakeApi().api} />)
+    expect(document.querySelector('[data-cover]')).toBeNull()
     expect(screen.getByText(/Nothing is selected\. Select a pull request or merge request/)).toBeTruthy()
   })
 
@@ -436,5 +447,269 @@ describe('sending', () => {
     await screen.findByText('The draft changed after you looked at it, so nothing was sent.')
     expect(screen.queryByTestId('report')).toBeNull()
     expect(view.container.querySelector('[data-comment="c-1"]')?.getAttribute('data-sent')).toBe('no')
+  })
+})
+
+/*
+ * The page's own server, through the protocol's `ask()`: which header a write carries, what a
+ * refusal says, and what the page draws when nothing answers or it is older than its server.
+ */
+describe('this app’s own server: the ticket a write carries, and the cover when it is not there', () => {
+  const realFetch = globalThis.fetch
+  let down = false
+  let reply: (url: string, init?: RequestInit) => Response = () => new Response('{}', { status: 200 })
+  let calls: { url: string; init: RequestInit | undefined }[] = []
+  const cover = () => document.querySelector('[data-cover]')
+  const island = () => {
+    const ticket = document.createElement('script')
+    ticket.id = 'ticket'
+    ticket.type = 'application/json'
+    ticket.textContent = JSON.stringify('the-ticket')
+    document.body.append(ticket)
+  }
+
+  beforeEach(() => {
+    down = false
+    calls = []
+    reply = () => new Response(JSON.stringify({ ok: true }), { status: 200 })
+    resetServerStanding()
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), init })
+      if (down) throw new TypeError('Load failed')
+      return reply(String(url), init)
+    }) as unknown as typeof fetch
+  })
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    resetServerStanding()
+    document.documentElement.className = ''
+    document.getElementById('ticket')?.remove()
+  })
+
+  test('a write carries the page’s ticket in x-module-ticket; a read carries none', async () => {
+    island()
+    const draft = emptyDraft(changeOf(target))
+    reply = () => new Response(JSON.stringify({ ok: true, draft }), { status: 200 })
+    await realApi.addComment('/p', GH_URL, { view: 'all', commit: HEAD, path: 'src/one.ts', side: 'new', line: 11, body: 'why?' })
+    await realApi.draft('/p', GH_URL)
+    const [write, read] = calls
+    expect(write?.url).toBe('./api/comment')
+    expect(write?.init?.method).toBe('POST')
+    expect((write?.init?.headers as Record<string, string>)['x-module-ticket']).toBe('the-ticket')
+    expect(JSON.parse(String(write?.init?.body))).toMatchObject({ projectPath: '/p', url: GH_URL, path: 'src/one.ts', line: 11, body: 'why?' })
+    expect(read?.url).toBe(`./api/draft?${new URLSearchParams({ projectPath: '/p', url: GH_URL })}`)
+    expect((read?.init?.headers as Record<string, string>)['x-module-ticket']).toBeUndefined()
+  })
+
+  test('a refused write throws the server’s own sentence — at 409, and at 200 with ok: false', async () => {
+    reply = () => new Response(JSON.stringify({ ok: false, error: 'A send for this change is already under way. Wait for it to finish.' }), { status: 409 })
+    await expect(realApi.send('/p', GH_URL, { ids: [], verdict: 'approve', summary: '' })).rejects.toThrow('A send for this change is already under way.')
+    reply = () => new Response(JSON.stringify({ ok: false, error: 'not done, and why' }), { status: 200 })
+    await expect(realApi.drop('/p', GH_URL, 'c-1')).rejects.toThrow('not done, and why')
+    /* A refusal is the server answering: no cover. */
+    render(<Screen host={host()} api={fakeApi().api} />)
+    expect(cover()).toBeNull()
+  })
+
+  test('a write refused for the ticket is a page older than its server: the stale cover, the review still mounted', async () => {
+    const view = (await opened()).container
+    reply = () => new Response(JSON.stringify({ ok: false, error: 'old page', refused: 'ticket' }), { status: 403 })
+    await act(async () => void (await realApi.drop('/p', GH_URL, 'c-1').catch(() => {})))
+    expect(cover()?.getAttribute('data-cover')).toBe('stale')
+    expect(cover()?.textContent).toContain('This page is older than its server')
+    expect(view.querySelector('[data-file="src/one.ts"]')?.closest('[hidden]')).not.toBeNull()
+  })
+
+  test('its own server not answering: the down cover over the mounted review, and Try again brings it back', async () => {
+    const view = (await opened()).container
+    down = true
+    await act(async () => void (await realApi.draft('/p', GH_URL).catch(() => {})))
+    expect(cover()?.getAttribute('data-cover')).toBe('down')
+    expect(cover()?.textContent).toContain('Review’s own server is not answering.')
+    /* Hidden, not gone: the diff and anything typed against it are still there. */
+    const file = view.querySelector('[data-file="src/one.ts"]')
+    expect(file?.closest('[hidden]')).not.toBeNull()
+    await act(async () => {
+      fireEvent.click(within(cover() as HTMLElement).getByRole('button', { name: 'Try again' }))
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    })
+    expect(cover()?.getAttribute('data-cover')).toBe('down')
+    down = false
+    await act(async () => {
+      fireEvent.click(within(cover() as HTMLElement).getByRole('button', { name: 'Try again' }))
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    })
+    expect(cover()).toBeNull()
+    expect(calls.at(-1)?.url).toBe('./healthz')
+    expect(view.querySelector('[data-file="src/one.ts"]')).toBe(file)
+  })
+
+  test('the real page waits, then says nothing is framing it; a greeting brings the host’s theme and no cover', async () => {
+    const view = render(<App />)
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 30))))
+    expect(cover()?.getAttribute('data-cover')).toBe('waiting')
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 800))))
+    expect(cover()?.getAttribute('data-cover')).toBe('unhosted')
+    view.unmount()
+
+    render(<App />)
+    await act(async () => {
+      window.postMessage({ type: 'kehikot.hello', protocol: 2, session: 's', state: null, context: { epic: null, project: 'p', projectPath: '/p', theme: 'dark', selection: [] } }, '*')
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    })
+    expect(cover()).toBeNull()
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(screen.getByText(/Nothing is selected/)).toBeTruthy()
+    /* This module offers neither a clear nor a refresh, so those presses — which `useHost` does deliver — change nothing. */
+    await act(async () => {
+      window.postMessage({ type: 'kehikot.clear', protocol: 2 }, '*')
+      window.postMessage({ type: 'kehikot.refresh', protocol: 2 }, '*')
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    })
+    expect(screen.getByText(/Nothing is selected/)).toBeTruthy()
+    expect(cover()).toBeNull()
+  })
+})
+
+/*
+ * What was being typed survives a reload of the page. A stale page reloads itself — on the Save
+ * press that found it out, or on the draft re-read — so every box writes its words as they change,
+ * under the project, the change and exactly what they were aimed at, and a fresh page reopens the
+ * box that was open. "Reload" here is unmounting the page and mounting a new one over the same
+ * sessionStorage, which is what a reload is to this code.
+ */
+describe('typed words are held across a reload, aimed at what they were typed on', () => {
+  const P = '/work/thesis'
+  const LINE = 'Comment on new line 11 of src/one.ts'
+  const box = (label = LINE) => screen.getByLabelText(label, { selector: 'textarea' }) as HTMLTextAreaElement
+  const held = (project = P) => Object.entries(readDrafts(project))
+  /** A new page over the same tab's storage, with whatever the server holds now. */
+  const reload = async (start: Partial<Draft> = {}, over: Partial<Host> = {}) => {
+    cleanup()
+    return opened(start, over)
+  }
+
+  test('a new comment: typed → reload → its line is picked and its box is open with the words', async () => {
+    await opened()
+    fireEvent.click(screen.getByRole('button', { name: LINE }))
+    fireEvent.change(box(), { target: { value: 'This reads wrong, because' } })
+    expect(held()).toHaveLength(1)
+    expect(held()[0]?.[0]).toBe(`${GH_URL}|new:all:${HEAD}:new:11:11:src/one.ts`)
+
+    await reload()
+    expect(box().value).toBe('This reads wrong, because')
+    /* On that line and on no other. */
+    expect(screen.queryByLabelText('Comment on new line 12 of src/one.ts', { selector: 'textarea' })).toBeNull()
+    expect(screen.queryByTestId('kept-words')).toBeNull()
+  })
+
+  test('saved → cleared; cancelled → cleared; another line pressed → cleared', async () => {
+    const { calls } = await opened()
+    fireEvent.click(screen.getByRole('button', { name: LINE }))
+    fireEvent.change(box(), { target: { value: 'Kept by the store.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
+    await waitFor(() => expect(calls.added).toHaveLength(1))
+    await waitFor(() => expect(held()).toEqual([]))
+
+    fireEvent.click(screen.getByRole('button', { name: LINE }))
+    fireEvent.change(box(), { target: { value: 'Thrown away.' } })
+    expect(held()).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(held()).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: LINE }))
+    fireEvent.change(box(), { target: { value: 'Left for another line.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on new line 12 of src/one.ts' }))
+    expect(held()).toEqual([])
+
+    await reload()
+    expect(screen.queryByLabelText(LINE, { selector: 'textarea' })).toBeNull()
+  })
+
+  test('a write that was refused leaves the words in the box and held', async () => {
+    const made = fakeApi()
+    made.api.addComment = () => Promise.reject(new Error('This page is older than its server — reloading…'))
+    const view = render(<Screen host={host()} api={made.api} />)
+    await waitFor(() => expect(view.container.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
+    await screen.findByRole('region', { name: 'Your review' })
+    fireEvent.click(screen.getByRole('button', { name: LINE }))
+    fireEvent.change(box(), { target: { value: 'Pressed on a stale page.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
+    await screen.findByText('This page is older than its server — reloading…')
+    expect(box().value).toBe('Pressed on a stale page.')
+    expect(held()).toHaveLength(1)
+    await reload()
+    expect(box().value).toBe('Pressed on a stale page.')
+  })
+
+  test('a different project, or a different change, does not see them', async () => {
+    await opened()
+    fireEvent.click(screen.getByRole('button', { name: LINE }))
+    fireEvent.change(box(), { target: { value: 'For the thesis only.' } })
+    await reload({}, { projectPath: '/work/other' })
+    expect(screen.queryByLabelText(LINE, { selector: 'textarea' })).toBeNull()
+    expect(document.body.textContent).not.toContain('For the thesis only.')
+    expect(held('/work/other')).toEqual([])
+    /* Another change in the same project: the change is in the key. */
+    expect(held()[0]?.[0].startsWith(`${GH_URL}|`)).toBe(true)
+  })
+
+  test('a comment typed on a head that has since been pushed over is shown as kept words, not opened on today’s lines', async () => {
+    const older = '2222222222222222222222222222222222222222'
+    keepDraft(P, `${GH_URL}|new:all:${older}:new:11:11:src/one.ts`, { base: '', text: 'About the old line 11.', aim: 'a comment on new line 11 of src/one.ts at 22222222' })
+    await opened()
+    expect(screen.queryByLabelText(LINE, { selector: 'textarea' })).toBeNull()
+    const kept = screen.getByTestId('kept-words')
+    expect(kept.textContent).toContain('About the old line 11.')
+    expect(kept.textContent).toContain('at 22222222')
+    fireEvent.click(within(kept).getByRole('button', { name: 'Discard' }))
+    expect(screen.queryByTestId('kept-words')).toBeNull()
+    expect(held()).toEqual([])
+  })
+
+  test('a rewording: restored open in the panel; and when the comment changed meanwhile it says so', async () => {
+    await opened({ comments: [comment({ id: 'c-1', body: 'first words' })] })
+    const panel = () => within(screen.getByRole('region', { name: 'Your review' }))
+    fireEvent.click(panel().getByRole('button', { name: 'Edit' }))
+    const label = /Reword the comment on/
+    /* Opened and not changed is not a draft. */
+    expect(held()).toEqual([])
+    fireEvent.change(panel().getByLabelText(label, { selector: 'textarea' }), { target: { value: 'better words' } })
+    expect(held()[0]).toEqual([`${GH_URL}|reword:c-1`, { base: 'first words', text: 'better words', aim: expect.stringContaining('a rewording of the comment on') }])
+
+    await reload({ comments: [comment({ id: 'c-1', body: 'an agent reworded this' })] })
+    expect((panel().getByLabelText(label, { selector: 'textarea' }) as HTMLTextAreaElement).value).toBe('better words')
+    expect(panel().getByTestId('held-stale').textContent).toContain('an agent reworded this')
+
+    /* The comment is gone altogether: the words are shown, not dropped. */
+    await reload({ comments: [] })
+    expect(screen.getByTestId('kept-words').textContent).toContain('better words')
+  })
+
+  test('the summary: typed and not yet left → reload → in the box, still unsaved, and saved by the next blur', async () => {
+    const first = await opened({ summary: 'saved words' })
+    const summary = () => screen.getByLabelText(/Summary/) as HTMLTextAreaElement
+    fireEvent.change(summary(), { target: { value: 'saved words, and more' } })
+    expect(first.calls.verdicts).toEqual([])
+    expect(held()[0]).toEqual([`${GH_URL}|summary`, { base: 'saved words', text: 'saved words, and more', aim: 'the review’s summary' }])
+
+    const second = await reload({ summary: 'saved words' })
+    expect(summary().value).toBe('saved words, and more')
+    expect(screen.queryByTestId('summary-stale')).toBeNull()
+    fireEvent.blur(summary())
+    await waitFor(() => expect(second.calls.verdicts).toEqual([[undefined, 'saved words, and more']]))
+    await waitFor(() => expect(held()).toEqual([]))
+
+    /* Saved: a reload restores nothing, and shows what the server holds. */
+    await reload({ summary: 'saved words, and more' })
+    expect(summary().value).toBe('saved words, and more')
+    expect(held()).toEqual([])
+  })
+
+  test('a held summary does not silently replace one the server has changed since: it says so', async () => {
+    keepDraft(P, `${GH_URL}|summary`, { base: 'saved words', text: 'my unsaved words', aim: 'the review’s summary' })
+    await opened({ summary: 'an agent wrote this summary' })
+    expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe('my unsaved words')
+    expect(screen.getByTestId('summary-stale').textContent).toContain('an agent wrote this summary')
   })
 })

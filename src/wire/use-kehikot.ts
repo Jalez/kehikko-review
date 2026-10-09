@@ -1,15 +1,22 @@
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 
-import { useKehikot as useProtocolKehikot, type Kehikot, type Where } from 'kehikot-module-protocol/client/react'
+import { useHost, type Host as ProtocolHost, type Where } from 'kehikot-module-protocol/client/react'
 
 import { ID } from '../../manifest.ts'
 
 /**
  * What the screen needs from the host, and nothing about how it arrived.
  *
- * A thin wrapper over the protocol's `useKehikot`: it applies the host's theme
- * to <html> and flattens the context into the fields this module reads, so a
- * screen can be rendered in a test with a plain object (see `Host`).
+ * A thin wrapper over the protocol's `useHost`, which is the listener, the grace,
+ * the theme on <html> and the page that reloads itself when it is older than its
+ * server. What is left here is this module's own: the selection held steady, the
+ * tracker reading's clock, and a `Host` narrow enough that a screen can be
+ * rendered in a test with a plain object.
+ *
+ * No `onClear` or `onRefresh` is passed. `useHost` would deliver those presses
+ * (the older `useKehikot` never did), and this module offers neither: it calls
+ * neither `clearable` nor `refreshable`, so a host draws no such button for it
+ * and a press that arrived anyway is ignored.
  */
 export interface Host {
   /** 'listening' until a host greets or the grace runs out; then 'hosted' or 'unhosted'. */
@@ -34,20 +41,12 @@ export interface Host {
    */
   trackerAt: string | null
   /** Ask the host for something (a method from the protocol). Rejects when unhosted or refused. */
-  request: Kehikot['request']
+  request: ProtocolHost['request']
 }
 
 export function useKehikot(): Host {
-  const kehikot = useProtocolKehikot(ID)
-  const context = kehikot.context
-  const theme = context?.theme ?? 'light'
-
-  useEffect(() => {
-    if (!context) return
-    const root = document.documentElement
-    root.classList.toggle('dark', theme === 'dark')
-    root.classList.toggle('light', theme === 'light')
-  }, [context, theme])
+  const host = useHost(ID)
+  const context = host.context
 
   /* Joined so that a context repeating the same selection — which a host sends
      after every click anywhere on the canvas — hands the screen the SAME array
@@ -58,15 +57,15 @@ export function useKehikot(): Host {
 
   return useMemo(
     () => ({
-      where: kehikot.where,
-      project: context?.project ?? null,
-      projectPath: context?.projectPath ?? null,
-      epic: context?.epic ?? null,
-      theme,
+      where: host.where,
+      project: host.project,
+      projectPath: host.projectPath,
+      epic: host.epic,
+      theme: host.theme,
       selection,
       trackerAt,
-      request: kehikot.request,
+      request: host.request,
     }),
-    [kehikot.where, kehikot.request, context?.project, context?.projectPath, context?.epic, theme, selection, trackerAt],
+    [host.where, host.request, host.project, host.projectPath, host.epic, host.theme, selection, trackerAt],
   )
 }

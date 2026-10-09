@@ -1,3 +1,5 @@
+import { answered, ask } from 'kehikot-module-protocol/client'
+
 import type { Target } from '../../forge/locate.ts'
 import type { Commit, Described, Patch } from '../../forge/read.ts'
 import type { Report } from '../../review/send.ts'
@@ -16,16 +18,6 @@ import type { Draft, Side, Verdict, View } from '../../review/shape.ts'
  * its code comes along). What the door answers and what the page expects are
  * then one declaration, and cannot drift into two.
  */
-const TICKET_HEADER = 'x-module-ticket'
-
-function ticket(): string {
-  const text = document.getElementById('ticket')?.textContent ?? '""'
-  try {
-    return String(JSON.parse(text))
-  } catch {
-    return ''
-  }
-}
 
 /** What `/api/change` answers: what the change is right now, and its commits oldest first. */
 export interface ChangeRead extends Described {
@@ -70,24 +62,19 @@ export interface Api {
 
 type Body = { ok?: boolean; error?: string } & Record<string, unknown>
 
-async function json(response: Response): Promise<Body> {
-  const body = (await response.json().catch(() => ({}))) as Body
-  /* The server's sentence, verbatim: it is the tracker's own words where the
-     tracker said any, and that is what the page is for. */
-  if (!response.ok || body.ok === false) throw new Error(body.error ?? `this app’s server answered ${response.status}`)
-  return body
-}
+/*
+ * Both through the protocol's `ask`: it carries the page's ticket on a write (`x-module-ticket`),
+ * and turns every failure into a sentence — the server's own `error` when it said no (a 2xx whose
+ * body says `ok: false` included), "not answering" when nothing did, "older than its server" when
+ * the ticket was refused. `answered` throws that sentence, which is what every caller here shows.
+ * It also records how the server is standing, which the cover in `app.tsx` is drawn from.
+ */
+const get = async (path: string, query: Record<string, string>): Promise<Body> => answered(await ask<Body>(`./api/${path}`, { query })) ?? {}
 
-const get = async (path: string, query: Record<string, string>): Promise<Body> => json(await fetch(`./api/${path}?${new URLSearchParams(query)}`))
+const post = async (path: string, body: Record<string, unknown>): Promise<Body> => answered(await ask<Body>(`./api/${path}`, { body })) ?? {}
 
-const post = async (path: string, body: Record<string, unknown>): Promise<Body> =>
-  json(
-    await fetch(`./api/${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', [TICKET_HEADER]: ticket() },
-      body: JSON.stringify(body),
-    }),
-  )
+/** Ask this app's own server whether it is there, for the cover's Try again. The answer is the standing `ask` records. */
+export const knock = async (): Promise<void> => void (await ask('./healthz'))
 
 export const api: Api = {
   change: async (url) => (await get('change', { url })) as unknown as ChangeRead,

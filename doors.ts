@@ -1,4 +1,5 @@
 import { KEHIKOT_DIR } from 'kehikot-module-protocol'
+import { establishBuild, mintTicket, refuseTicket, type Reply } from 'kehikot-module-protocol/serve'
 
 import { locate, type Target } from './forge/locate.ts'
 import { commits as readCommits, describe, diff, held, isSha, login, type Commit, type Described, type Range } from './forge/read.ts'
@@ -38,23 +39,34 @@ import { changeDraft, listDrafts, readDraftFor } from './store.ts'
 /**
  * The ticket a page write has to carry.
  *
- * Minted per process and printed into `/app` (see `page/document.ts`), so only
+ * Minted per process and printed into `/app` (by the protocol's `doors()`), so only
  * this app's own page holds it. Loopback is a fence around the machine, not
  * around the programs on it: without this, any page in the browser that found
  * the port could post a review in the person's name. Reads are ungated, and
  * `/mcp` is ungated because an agent has no page to have been handed a ticket
  * by — which is exactly why `/mcp` cannot send.
  */
-export const TICKET = crypto.randomUUID()
+export const TICKET = mintTicket()
 
-/** The header the page sends the ticket in. */
-export const TICKET_HEADER = 'x-module-ticket'
+/**
+ * What a write without the ticket is told. Said through the protocol's `refuseTicket`, whose mark
+ * (`refused: 'ticket'`) is how this app's page tells "I am older than my server" — and reloads
+ * itself — from every other refusal.
+ */
+const NO_TICKET =
+  'that press did not come from this app’s own page — or the page is from a previous run of this server, in which '
+  + 'case reloading the pane gives it the ticket this run minted.'
 
-export interface Reply {
-  status: number
-  /** `null` means "answer with no body", which is what a notification gets. */
-  body: unknown
-}
+/** What this process is built from and when it started; `doors()` says it wherever a build is said. */
+export const BUILD = establishBuild({ version: VERSION, dir: import.meta.dirname })
+
+export type { Reply }
+
+/*
+ * Never cached. A draft and a diff are both things that change under the page, and the page
+ * re-reads them on purpose: a cached answer would be an agent's comment that never appears.
+ */
+const FRESH = { 'cache-control': 'no-store' }
 
 /**
  * What the doors reach the world through, as a value.
@@ -77,8 +89,8 @@ const REAL: Deps = {
   id: () => `c-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`,
 }
 
-const ok = (body: Record<string, unknown>): Reply => ({ status: 200, body: { ok: true, ...body } })
-const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why } })
+const ok = (body: Record<string, unknown>): Reply => ({ status: 200, body: { ok: true, ...body }, headers: FRESH })
+const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why }, headers: FRESH })
 
 const str = (value: unknown, max: number): string | null => (typeof value === 'string' && value.length <= max ? value : null)
 
@@ -628,7 +640,8 @@ export async function answer(
      anything about the request is even read. ---- */
 
   if (method !== 'POST') return bad('not here', 404)
-  if (ticket !== TICKET) return bad('that press did not come from this app’s own page', 403)
+  const refused = refuseTicket(ticket, TICKET, NO_TICKET)
+  if (refused) return refused
   if (!body) return bad('that was not a request')
 
   const target = locate(str(body.url, 600))
