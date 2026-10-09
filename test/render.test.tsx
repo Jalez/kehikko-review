@@ -1,14 +1,14 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
-import { HostRefused } from 'kehikot-module-protocol/client'
+import { HostRefused, resetServerStanding } from 'kehikot-module-protocol/client'
 
 import type { Report } from '../review/send.ts'
 import { emptyDraft } from '../review/draft.ts'
 import { changeOf, type Comment, type Draft } from '../review/shape.ts'
 import { locate } from '../forge/locate.ts'
-import { Screen } from '../src/app.tsx'
-import type { Api, ChangeRead, CommentInput, Confirmed } from '../src/wire/api.ts'
+import { App, Screen, UNHOSTED } from '../src/app.tsx'
+import { api as realApi, type Api, type ChangeRead, type CommentInput, type Confirmed } from '../src/wire/api.ts'
 import type { Host } from '../src/wire/use-kehikot.ts'
 
 import { COMMIT_PATCH, FIRST, GH_URL, HEAD, MERGE_BASE, PATCH } from './fake.ts'
@@ -152,16 +152,24 @@ async function opened(start: Partial<Draft> = {}, over: Partial<Host> = {}) {
 describe('when there is no change to review, the page says which absence it is', () => {
   test('nothing is framing it', () => {
     render(<Screen host={host({ where: 'unhosted', selection: [], projectPath: null, project: null, epic: null })} api={fakeApi().api} />)
-    expect(screen.getByText(/Nothing is framing this page/)).toBeTruthy()
+    const cover = document.querySelector('[data-cover]')
+    expect(cover?.getAttribute('data-cover')).toBe('unhosted')
+    expect(cover?.textContent).toContain('Nothing is framing this page — open Review in Kehikot.')
+    /* What this module is for, under the shared sentence. */
+    expect(cover?.textContent).toContain(UNHOSTED)
+    expect(UNHOSTED).toContain('select a pull request or merge request')
+    expect(screen.queryByText(/Nothing is selected/)).toBeNull()
   })
 
   test('it is still listening for a host', () => {
     render(<Screen host={host({ where: 'listening', selection: [] })} api={fakeApi().api} />)
-    expect(screen.getByText('Listening for a Kehikot host…')).toBeTruthy()
+    expect(document.querySelector('[data-cover]')?.getAttribute('data-cover')).toBe('waiting')
+    expect(screen.getByText('Waiting for Kehikot…')).toBeTruthy()
   })
 
   test('nothing is selected', () => {
     render(<Screen host={host({ selection: [] })} api={fakeApi().api} />)
+    expect(document.querySelector('[data-cover]')).toBeNull()
     expect(screen.getByText(/Nothing is selected\. Select a pull request or merge request/)).toBeTruthy()
   })
 
@@ -436,5 +444,126 @@ describe('sending', () => {
     await screen.findByText('The draft changed after you looked at it, so nothing was sent.')
     expect(screen.queryByTestId('report')).toBeNull()
     expect(view.container.querySelector('[data-comment="c-1"]')?.getAttribute('data-sent')).toBe('no')
+  })
+})
+
+/*
+ * The page's own server, through the protocol's `ask()`: which header a write carries, what a
+ * refusal says, and what the page draws when nothing answers or it is older than its server.
+ */
+describe('this app’s own server: the ticket a write carries, and the cover when it is not there', () => {
+  const realFetch = globalThis.fetch
+  let down = false
+  let reply: (url: string, init?: RequestInit) => Response = () => new Response('{}', { status: 200 })
+  let calls: { url: string; init: RequestInit | undefined }[] = []
+  const cover = () => document.querySelector('[data-cover]')
+  const island = () => {
+    const ticket = document.createElement('script')
+    ticket.id = 'ticket'
+    ticket.type = 'application/json'
+    ticket.textContent = JSON.stringify('the-ticket')
+    document.body.append(ticket)
+  }
+
+  beforeEach(() => {
+    down = false
+    calls = []
+    reply = () => new Response(JSON.stringify({ ok: true }), { status: 200 })
+    resetServerStanding()
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), init })
+      if (down) throw new TypeError('Load failed')
+      return reply(String(url), init)
+    }) as unknown as typeof fetch
+  })
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    resetServerStanding()
+    document.documentElement.className = ''
+    document.getElementById('ticket')?.remove()
+  })
+
+  test('a write carries the page’s ticket in x-module-ticket; a read carries none', async () => {
+    island()
+    const draft = emptyDraft(changeOf(target))
+    reply = () => new Response(JSON.stringify({ ok: true, draft }), { status: 200 })
+    await realApi.addComment('/p', GH_URL, { view: 'all', commit: HEAD, path: 'src/one.ts', side: 'new', line: 11, body: 'why?' })
+    await realApi.draft('/p', GH_URL)
+    const [write, read] = calls
+    expect(write?.url).toBe('./api/comment')
+    expect(write?.init?.method).toBe('POST')
+    expect((write?.init?.headers as Record<string, string>)['x-module-ticket']).toBe('the-ticket')
+    expect(JSON.parse(String(write?.init?.body))).toMatchObject({ projectPath: '/p', url: GH_URL, path: 'src/one.ts', line: 11, body: 'why?' })
+    expect(read?.url).toBe(`./api/draft?${new URLSearchParams({ projectPath: '/p', url: GH_URL })}`)
+    expect((read?.init?.headers as Record<string, string>)['x-module-ticket']).toBeUndefined()
+  })
+
+  test('a refused write throws the server’s own sentence — at 409, and at 200 with ok: false', async () => {
+    reply = () => new Response(JSON.stringify({ ok: false, error: 'A send for this change is already under way. Wait for it to finish.' }), { status: 409 })
+    await expect(realApi.send('/p', GH_URL, { ids: [], verdict: 'approve', summary: '' })).rejects.toThrow('A send for this change is already under way.')
+    reply = () => new Response(JSON.stringify({ ok: false, error: 'not done, and why' }), { status: 200 })
+    await expect(realApi.drop('/p', GH_URL, 'c-1')).rejects.toThrow('not done, and why')
+    /* A refusal is the server answering: no cover. */
+    render(<Screen host={host()} api={fakeApi().api} />)
+    expect(cover()).toBeNull()
+  })
+
+  test('a write refused for the ticket is a page older than its server: the stale cover, the review still mounted', async () => {
+    const view = (await opened()).container
+    reply = () => new Response(JSON.stringify({ ok: false, error: 'old page', refused: 'ticket' }), { status: 403 })
+    await act(async () => void (await realApi.drop('/p', GH_URL, 'c-1').catch(() => {})))
+    expect(cover()?.getAttribute('data-cover')).toBe('stale')
+    expect(cover()?.textContent).toContain('This page is older than its server')
+    expect(view.querySelector('[data-file="src/one.ts"]')?.closest('[hidden]')).not.toBeNull()
+  })
+
+  test('its own server not answering: the down cover over the mounted review, and Try again brings it back', async () => {
+    const view = (await opened()).container
+    down = true
+    await act(async () => void (await realApi.draft('/p', GH_URL).catch(() => {})))
+    expect(cover()?.getAttribute('data-cover')).toBe('down')
+    expect(cover()?.textContent).toContain('Review’s own server is not answering.')
+    /* Hidden, not gone: the diff and anything typed against it are still there. */
+    const file = view.querySelector('[data-file="src/one.ts"]')
+    expect(file?.closest('[hidden]')).not.toBeNull()
+    await act(async () => {
+      fireEvent.click(within(cover() as HTMLElement).getByRole('button', { name: 'Try again' }))
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    })
+    expect(cover()?.getAttribute('data-cover')).toBe('down')
+    down = false
+    await act(async () => {
+      fireEvent.click(within(cover() as HTMLElement).getByRole('button', { name: 'Try again' }))
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    })
+    expect(cover()).toBeNull()
+    expect(calls.at(-1)?.url).toBe('./healthz')
+    expect(view.querySelector('[data-file="src/one.ts"]')).toBe(file)
+  })
+
+  test('the real page waits, then says nothing is framing it; a greeting brings the host’s theme and no cover', async () => {
+    const view = render(<App />)
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 30))))
+    expect(cover()?.getAttribute('data-cover')).toBe('waiting')
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 800))))
+    expect(cover()?.getAttribute('data-cover')).toBe('unhosted')
+    view.unmount()
+
+    render(<App />)
+    await act(async () => {
+      window.postMessage({ type: 'kehikot.hello', protocol: 2, session: 's', state: null, context: { epic: null, project: 'p', projectPath: '/p', theme: 'dark', selection: [] } }, '*')
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    })
+    expect(cover()).toBeNull()
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(screen.getByText(/Nothing is selected/)).toBeTruthy()
+    /* This module offers neither a clear nor a refresh, so those presses — which `useHost` does deliver — change nothing. */
+    await act(async () => {
+      window.postMessage({ type: 'kehikot.clear', protocol: 2 }, '*')
+      window.postMessage({ type: 'kehikot.refresh', protocol: 2 }, '*')
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    })
+    expect(screen.getByText(/Nothing is selected/)).toBeTruthy()
+    expect(cover()).toBeNull()
   })
 })

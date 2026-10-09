@@ -74,6 +74,7 @@ export function ChangeReview({
   hintHead,
   projectPath,
   api,
+  round = 0,
 }: {
   /** The ref as selected on the canvas: `gh#46`, `!3105`. */
   refName: string
@@ -85,6 +86,8 @@ export function ChangeReview({
   hintHead: string | null
   projectPath: string | null
   api: Api
+  /** Bumped by the page when its own server is back after not answering: whatever failed here is asked again. */
+  round?: number
 }) {
   /* ---- the change ---- */
   const [change, setChange] = useState<Loaded<ChangeRead>>({ at: 'loading' })
@@ -180,6 +183,21 @@ export function ChangeReview({
   }, [reread, projectPath])
 
   /** Run a write and take the draft it answers with as the truth. */
+  /*
+   * The page's Try again, after its own server did not answer. Only what FAILED is asked again: a
+   * diff that is on screen stays on screen, and nothing typed against it is disturbed.
+   */
+  const failed = useRef({ change: false, patch: false })
+  failed.current = { change: change.at === 'error', patch: patch.at === 'error' }
+  const asked = useRef(round)
+  useEffect(() => {
+    if (round === asked.current) return
+    asked.current = round
+    if (failed.current.change) setAgain((n) => n + 1)
+    if (failed.current.patch) setPatchAgain((n) => n + 1)
+    reread()
+  }, [round, reread])
+
   const write = useCallback(async (does: () => Promise<Draft>): Promise<void> => {
     writes.current += 1
     const value = await does()
