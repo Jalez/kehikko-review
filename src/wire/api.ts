@@ -73,9 +73,6 @@ const get = async (path: string, query: Record<string, string>): Promise<Body> =
 
 const post = async (path: string, body: Record<string, unknown>): Promise<Body> => answered(await ask<Body>(`./api/${path}`, { body })) ?? {}
 
-/** Ask this app's own server whether it is there, for the cover's Try again. The answer is the standing `ask` records. */
-export const knock = async (): Promise<void> => void (await ask('./healthz'))
-
 export const api: Api = {
   change: async (url) => (await get('change', { url })) as unknown as ChangeRead,
   diff: async (url, view, sha) => (await get('diff', { url, view, sha })) as unknown as Patch,

@@ -8,7 +8,7 @@ import { emptyDraft } from '../review/draft.ts'
 import { changeOf, type Comment, type Draft } from '../review/shape.ts'
 import { locate } from '../forge/locate.ts'
 import { App, Screen, UNHOSTED } from '../src/app.tsx'
-import { keepDraft, readDrafts } from '../src/store/held.ts'
+import { drafts } from '../src/view/holding.ts'
 import { api as realApi, type Api, type ChangeRead, type CommentInput, type Confirmed } from '../src/wire/api.ts'
 import type { Host } from '../src/wire/use-kehikot.ts'
 
@@ -26,6 +26,7 @@ afterEach(cleanup)
 afterEach(() => sessionStorage.clear())
 
 const AT = '2026-10-07T10:00:00.000Z'
+const OTHER_FIRST = 'diff --git a/src/zero.ts b/src/zero.ts\n--- a/src/zero.ts\n+++ b/src/zero.ts\n@@ -1,2 +1,2 @@\n-const zero = 0\n+const zero = 1\n export { zero }\n'
 const target = locate(GH_URL)!
 
 const row = (ref: string, over: Record<string, unknown> = {}) => ({
@@ -582,7 +583,7 @@ describe('typed words are held across a reload, aimed at what they were typed on
   const P = '/work/thesis'
   const LINE = 'Comment on new line 11 of src/one.ts'
   const box = (label = LINE) => screen.getByLabelText(label, { selector: 'textarea' }) as HTMLTextAreaElement
-  const held = (project = P) => Object.entries(readDrafts(project))
+  const held = (project = P) => Object.entries(drafts.at(project).all())
   /** A new page over the same tab's storage, with whatever the server holds now. */
   const reload = async (start: Partial<Draft> = {}, over: Partial<Host> = {}) => {
     cleanup()
@@ -626,6 +627,31 @@ describe('typed words are held across a reload, aimed at what they were typed on
     expect(screen.queryByLabelText(LINE, { selector: 'textarea' })).toBeNull()
   })
 
+  test('the view switched away and back, with no reload: the box comes back on its own line with its words, never open and empty', async () => {
+    const made = fakeApi()
+    /* A commit whose diff lists another file first, so the same file sits at another position in each view. */
+    const diff = made.api.diff
+    made.api.diff = async (url, view, sha) => ({ ...(await diff(url, view, sha)), ...(view === 'commit' ? { text: `${OTHER_FIRST}${COMMIT_PATCH}` } : {}) })
+    const view = render(<Screen host={host()} api={made.api} />)
+    await waitFor(() => expect(view.container.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
+    await screen.findByRole('region', { name: 'Your review' })
+    const select = () => screen.getByLabelText('Which changes to show') as HTMLSelectElement
+    const boxes = () => [...view.container.querySelectorAll('textarea[id^="box-Comment on"]')] as HTMLTextAreaElement[]
+
+    fireEvent.click(screen.getByRole('button', { name: LINE }))
+    fireEvent.change(box(), { target: { value: 'Typed, then the view was switched.' } })
+    fireEvent.change(select(), { target: { value: FIRST } })
+    await waitFor(() => expect(view.container.querySelector('[data-file="src/zero.ts"]')).toBeTruthy())
+    /* Away: no box on this diff, which is another diff. The words are still held. */
+    expect(boxes()).toEqual([])
+    expect(held()).toHaveLength(1)
+
+    fireEvent.change(select(), { target: { value: 'all' } })
+    await waitFor(() => expect(view.container.querySelector('[data-file="src/gone.ts"]')).toBeTruthy())
+    expect(boxes().map((one) => [one.id, one.value])).toEqual([[`box-${LINE}`, 'Typed, then the view was switched.']])
+    expect(screen.queryByTestId('kept-words')).toBeNull()
+  })
+
   test('a write that was refused leaves the words in the box and held', async () => {
     const made = fakeApi()
     made.api.addComment = () => Promise.reject(new Error('This page is older than its server — reloading…'))
@@ -656,7 +682,7 @@ describe('typed words are held across a reload, aimed at what they were typed on
 
   test('a comment typed on a head that has since been pushed over is shown as kept words, not opened on today’s lines', async () => {
     const older = '2222222222222222222222222222222222222222'
-    keepDraft(P, `${GH_URL}|new:all:${older}:new:11:11:src/one.ts`, { base: '', text: 'About the old line 11.', aim: 'a comment on new line 11 of src/one.ts at 22222222' })
+    drafts.at(P).keep(`${GH_URL}|new:all:${older}:new:11:11:src/one.ts`, { base: '', text: 'About the old line 11.', aim: 'a comment on new line 11 of src/one.ts at 22222222' })
     await opened()
     expect(screen.queryByLabelText(LINE, { selector: 'textarea' })).toBeNull()
     const kept = screen.getByTestId('kept-words')
@@ -707,7 +733,7 @@ describe('typed words are held across a reload, aimed at what they were typed on
   })
 
   test('a held summary does not silently replace one the server has changed since: it says so', async () => {
-    keepDraft(P, `${GH_URL}|summary`, { base: 'saved words', text: 'my unsaved words', aim: 'the review’s summary' })
+    drafts.at(P).keep(`${GH_URL}|summary`, { base: 'saved words', text: 'my unsaved words', aim: 'the review’s summary' })
     await opened({ summary: 'an agent wrote this summary' })
     expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe('my unsaved words')
     expect(screen.getByTestId('summary-stale').textContent).toContain('an agent wrote this summary')
