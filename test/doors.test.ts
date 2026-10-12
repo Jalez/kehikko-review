@@ -138,7 +138,7 @@ describe('writing through the page’s API', () => {
       answer: ((method, path, query, body, ticket) => answer(method, path, query, body, ticket, deps)) as typeof answer,
     })
     const through = async (method: string, url: string, { body, headers }: { body?: unknown; headers?: Record<string, string> } = {}) => {
-      const sent = (await doors(new Request(`http://127.0.0.1${url}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })))!
+      const sent = (await doors(new Request(`http://127.0.0.1${url}`, { method, headers: { 'content-type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body) })))!
       return { status: sent.status, headers: sent.headers, json: (await sent.clone().json().catch(() => null)) as Record<string, unknown>, text: await sent.text() }
     }
     const bare = await through('POST', '/api/comment', { body: comment(dir) })
