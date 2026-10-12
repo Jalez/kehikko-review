@@ -146,8 +146,10 @@ export const MANIFEST: Manifest = manifestSchema.parse({
    * exists.
    */
   reacts: ['selection', 'tracker'],
-  /* Why this module has nothing to narrow by the parts of an epic. */
-  partless: 'Holds a review of the pull request a person selected; narrowing would hide their own selection or a draft in progress.',
+  /* Why this module has nothing to narrow by the parts of an epic: it has no list. It shows one
+     thing, the change somebody selected, with the review they are writing of it — and that is in
+     their hands whatever is picked. */
+  partless: 'Shows the review of the one change a person selected, which is always in hand.',
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,
     uses: ['trackers:read'],
