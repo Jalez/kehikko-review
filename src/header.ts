@@ -58,6 +58,7 @@ export function headerOf(state: HeaderState): HeaderItemInput[] {
         id: 'change',
         label: 'Change under review',
         icon: 'git-pull-request',
+        agents: true,
         value: `c${on}`,
         options: state.changes.map((ref, at) => ({ id: `c${at}`, label: cut(ref) })),
       })
@@ -74,6 +75,7 @@ export function headerOf(state: HeaderState): HeaderItemInput[] {
     id: 'showing',
     label: state.more || state.commits.length > room ? 'Showing · not every commit is listed' : 'Showing',
     icon: 'git-commit-horizontal',
+    agents: true,
     value: state.showing === ALL || commits.some((one) => one.sha === state.showing) ? state.showing : ALL,
     options: [
       { id: ALL, label: cut(`All changes${counted(state.waitingAll)}`) },
