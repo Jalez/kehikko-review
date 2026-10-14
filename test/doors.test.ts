@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { WELL_KNOWN } from 'kehikot-module-protocol'
+import { WELL_KNOWN, toolEffect } from 'kehikot-module-protocol'
 
 import { BUILD, MANIFEST, TICKET, answer, type Deps } from '../doors.ts'
 import { forget } from '../forge/read.ts'
@@ -365,6 +365,41 @@ describe('the MCP door', () => {
     /* And every tool that writes says so in its own description. */
     for (const one of tools.filter((t) => t.name !== 'read_change' && t.name !== 'read_diff')) expect(one.description).toContain('Nothing is posted to the tracker by this tool')
     expect(tools.find((t) => t.name === 'add_comment')!.description).toContain('HOW A COMMENT IS ANCHORED')
+  })
+
+  test('every tool says whether it reads, and takes the project as `project`', async () => {
+    const { rpc } = world()
+    const tools = ((await rpc('tools/list')).result?.tools ?? []) as unknown as {
+      name: string
+      annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean }
+      inputSchema: { properties: Record<string, unknown>; required: string[] }
+    }[]
+    const effects = Object.fromEntries(tools.map((one) => [one.name, toolEffect(one)]))
+    expect(effects).toEqual({
+      list_reviews: 'reads',
+      read_review: 'reads',
+      read_change: 'reads',
+      read_diff: 'reads',
+      add_comment: 'writes',
+      reword_comment: 'destroys',
+      drop_comment: 'destroys',
+      set_verdict: 'destroys',
+    })
+    for (const one of tools) {
+      expect(Object.keys(one.inputSchema.properties)).toContain('project')
+      expect(Object.keys(one.inputSchema.properties)).not.toContain('projectPath')
+      expect(one.inputSchema.required).toContain('project')
+    }
+  })
+
+  test('the project is `project`; `projectPath`, the name before, is still read', async () => {
+    const dir = project()
+    const { tool } = world()
+    expect((await tool('add_comment', { project: dir, change: GH_URL, path: 'src/one.ts', line: 12, body: 'By the new name.' })).isError).toBe(false)
+    const named = await tool('read_review', { projectPath: dir, change: GH_URL })
+    expect(named.isError).toBe(false)
+    expect(named.text).toContain('By the new name.')
+    expect((await tool('list_reviews', { project: dir })).text).toContain('1 draft comment')
   })
 
   test('an agent cannot send by calling a tool that is not there, or by posting to the page’s door without its ticket', async () => {

@@ -3,7 +3,6 @@ import { useState } from 'react'
 import { probeServer } from 'kehikot-module-protocol/client'
 import { Cover, coverFor, useServerStanding } from 'kehikot-module-protocol/client/react'
 
-import { Button } from '@/components/ui/button'
 import { current, type Seen } from '@/live/changes'
 import { useChanges } from '@/live/use-changes'
 import { ChangeReview } from '@/view/change-review'
@@ -93,25 +92,6 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
         </Note>
       ) : null}
 
-      {changes.length > 1 ? (
-        <div className="flex min-w-0 flex-wrap items-center gap-1 text-[0.7rem] leading-4" role="group" aria-label="Which change to review">
-          <span className="text-muted-foreground">{changes.length} changes are selected; reviewing one:</span>
-          {changes.map((ref) => (
-            <Button
-              key={ref}
-              type="button"
-              size="sm"
-              variant={ref === refName ? 'default' : 'outline'}
-              aria-pressed={ref === refName}
-              className="h-6 max-w-full px-2 font-mono text-[0.7rem]"
-              onClick={() => setPicked(ref)}
-            >
-              <span className="truncate">{ref}</span>
-            </Button>
-          ))}
-        </div>
-      ) : null}
-
       {refName && row?.at === 'change' ? (
         <ChangeReview
           /* Keyed by the change: another change is another review, and no
@@ -125,6 +105,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
           projectPath={host.projectPath}
           api={api}
           round={round}
+          chrome={{ header: host.header, presses: host.presses, drawn: host.where === 'hosted' && Boolean(host.pressed), changes, onChange: setPicked }}
         />
       ) : null}
 

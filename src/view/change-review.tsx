@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import type { HeaderItemInput } from 'kehikot-module-protocol'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { opening } from '@/diff/budget'
+import { HeaderFallback } from '@/header-fallback'
+import { ALL, headerOf } from '@/header'
+import type { Host } from '@/wire/use-kehikot'
 import { parseDiff, totals, type FileDiff } from '@/diff/parse'
 import type { Api, ChangeRead } from '@/wire/api'
 
@@ -78,6 +83,7 @@ export function ChangeReview({
   projectPath,
   api,
   round = 0,
+  chrome,
 }: {
   /** The ref as selected on the canvas: `gh#46`, `!3105`. */
   refName: string
@@ -91,6 +97,14 @@ export function ChangeReview({
   api: Api
   /** Bumped by the page when its own server is back after not answering: whatever failed here is asked again. */
   round?: number
+  /** The page's header: what to declare it through, whether a host draws it, and which changes there are to choose between. */
+  chrome?: {
+    header: Host['header']
+    presses: Host['presses']
+    drawn: boolean
+    changes: readonly string[]
+    onChange(ref: string): void
+  }
 }) {
   /* ---- the change ---- */
   const [change, setChange] = useState<Loaded<ChangeRead>>({ at: 'loading' })
@@ -329,6 +343,56 @@ export function ChangeReview({
         return shownHere && !files.some((f) => f.path === path.join(':'))
       })
 
+  /*
+   * The header: the view switch and, when several changes are selected, the change switch. Declared
+   * whole, and again only when it is a different list: a keystroke in a comment changes none of it.
+   */
+  const items = useMemo<HeaderItemInput[]>(
+    () =>
+      chrome
+        ? headerOf({
+            changes: chrome.changes,
+            change: refName,
+            commits: commits.map((c) => ({ sha: c.sha, title: c.title, waiting: waitingIn('commit', c.sha) })),
+            waitingAll: waitingIn('all', head),
+            showing: showing.view === 'all' ? ALL : showing.sha,
+            more: change.at === 'ok' && Boolean(change.value.more),
+          })
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `waitingIn` is a function of `all`
+    [chrome?.changes, refName, commits, head, showing, all, change],
+  )
+  const itemsKey = chrome && change.at === 'ok' ? JSON.stringify(items) : ''
+  const declare = chrome?.header
+  useEffect(() => {
+    declare?.(itemsKey ? (JSON.parse(itemsKey) as HeaderItemInput[]) : [])
+  }, [declare, itemsKey])
+  useEffect(() => () => declare?.([]), [declare])
+  const press = (pressing: { item: string; value?: string | boolean }): string | boolean => {
+    const { item, value } = pressing
+    if (item === 'change') {
+      const to = typeof value === 'string' && value.startsWith('c') ? chrome?.changes[Number(value.slice(1))] : undefined
+      if (!to) return 'That is no longer one of the selected changes.'
+      chrome?.onChange(to)
+      return true
+    }
+    if (item === 'showing') {
+      if (value === ALL) setShowing({ view: 'all' })
+      else if (typeof value === 'string' && commits.some((c) => c.sha === value)) setShowing({ view: 'commit', sha: value })
+      else return 'That commit is no longer one of this change’s.'
+      return true
+    }
+    return 'That is not something this page has.'
+  }
+  const presses = chrome?.presses
+  if (presses) presses.current = press
+  useEffect(
+    () => () => {
+      if (presses) presses.current = null
+    },
+    [presses],
+  )
+
   const canWrite = Boolean(projectPath) && draft.at === 'ok' && sha !== null
 
   const reword = (id: string, body: string) => write(() => api.reword(projectPath!, url, id, body))
@@ -337,8 +401,10 @@ export function ChangeReview({
   return (
     <HoldingContext.Provider value={holding}>
     <section className="flex min-w-0 flex-col gap-2" data-ref={refName}>
+      {/* No toolbar: View is the host's. This control is for a page no host draws it for. */}
+      {chrome && !chrome.drawn && change.at === 'ok' ? <HeaderFallback items={items} onPress={press} className="fixed top-1 right-1" /> : null}
       <header className="flex min-w-0 flex-col gap-1">
-        <h2 className="text-[0.75rem] leading-4 font-semibold">
+        <h2 className={`text-[0.75rem] leading-4 font-semibold${chrome && !chrome.drawn ? ' pr-6' : ''}`}>
           <span className="font-mono">{refName}</span>
           {shownTitle ? <span className="font-normal"> {shownTitle}</span> : null}
         </h2>
@@ -364,34 +430,6 @@ export function ChangeReview({
           </a>
         </p>
 
-        {change.at === 'ok' ? (
-          <label className="flex min-w-0 flex-col gap-0.5 text-[0.7rem] leading-4 text-muted-foreground">
-            Showing
-            {/* A native select: it cannot overflow a 220-pixel frame, it is
-                keyboard- and screen-reader-operable without any code here, and
-                its menu is drawn by the system OUTSIDE the frame, where a
-                custom popover would be clipped by it. Each entry carries the
-                number of draft comments in that view, so where the review's
-                comments sit is visible without visiting every commit. */}
-            <select
-              aria-label="Which changes to show"
-              className="w-full min-w-0 truncate rounded-md border bg-background px-1 py-0.5 text-[0.7rem] text-foreground"
-              value={showing.view === 'all' ? 'all' : showing.sha}
-              onChange={(event) => setShowing(event.target.value === 'all' ? { view: 'all' } : { view: 'commit', sha: event.target.value })}
-            >
-              <option value="all">
-                All changes{counted(waitingIn('all', head))}
-              </option>
-              {commits.map((commit) => (
-                <option key={commit.sha} value={commit.sha}>
-                  {short(commit.sha)} {commit.title}
-                  {counted(waitingIn('commit', commit.sha))}
-                </option>
-              ))}
-            </select>
-            {change.value.more ? <span>This change has more commits than the 100 listed here.</span> : null}
-          </label>
-        ) : null}
       </header>
 
       {strays.length ? (
@@ -546,8 +584,6 @@ export function ChangeReview({
     </HoldingContext.Provider>
   )
 }
-
-const counted = (n: number): string => (n ? ` — ${n} ${n === 1 ? 'comment' : 'comments'}` : '')
 
 function safeHost(url: string): string {
   try {

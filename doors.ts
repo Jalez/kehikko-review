@@ -1,4 +1,4 @@
-import { KEHIKOT_DIR } from 'kehikot-module-protocol'
+import { KEHIKOT_DIR, doorContext } from 'kehikot-module-protocol'
 import { establishBuild, mintTicket, refuseTicket, type Reply } from 'kehikot-module-protocol/serve'
 
 import { locate, type Target } from './forge/locate.ts'
@@ -305,10 +305,10 @@ async function send(deps: Deps, projectPath: string | null, target: Target, body
  * ------------------------------------------------------------------ */
 
 const PROJECT = {
-  projectPath: {
+  project: {
     type: 'string',
     description:
-      `The absolute directory of the project. Required: drafts are kept inside the project, at <projectPath>/${KEHIKOT_DIR}/review/, so this is the address of the file and not a filter.`,
+      `The absolute directory of the project. Required: drafts are kept inside the project, at <project>/${KEHIKOT_DIR}/review/, so this is the address of the file and not a filter.`,
   },
 } as const
 
@@ -333,26 +333,46 @@ const ANCHORING =
   + '`side: "old"` reads the first and is for a line that was REMOVED. Only lines the diff shows can be commented on, and a range (start_line to line) must stay inside one hunk. '
   + 'The comment is checked against the diff when you add it, and refused with the reason if it does not point at real lines.'
 
+/** What a tool says it does (MCP's own hints): a reader, a write that deletes nothing, or one that replaces what was there. */
+const READS = { readOnlyHint: true, destructiveHint: false, idempotentHint: true } as const
+const WRITES = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const
+const REPLACES = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } as const
+/** The tool, with the state of the `annotations` it states. `openWorldHint`: it asks the tracker. */
+const ANNOTATIONS: Record<string, Record<string, boolean>> = {
+  list_reviews: { ...READS, openWorldHint: false },
+  read_review: { ...READS, openWorldHint: false },
+  read_change: { ...READS, openWorldHint: true },
+  read_diff: { ...READS, openWorldHint: true },
+  add_comment: { ...WRITES, openWorldHint: true },
+  reword_comment: REPLACES,
+  drop_comment: { ...REPLACES, idempotentHint: false },
+  set_verdict: REPLACES,
+}
+
 function tools() {
+  return listed().map((tool) => ({ ...tool, annotations: ANNOTATIONS[tool.name] }))
+}
+
+function listed() {
   return [
     {
       name: 'list_reviews',
       description: 'The draft reviews kept in a project: one line per pull or merge request, with how many comments are waiting and the verdict proposed.' + NOT_SENT,
-      inputSchema: { type: 'object', properties: { ...PROJECT }, required: ['projectPath'] },
+      inputSchema: { type: 'object', properties: { ...PROJECT }, required: ['project'] },
     },
     {
       name: 'read_review',
       description:
         'The draft review of one change: every comment with its id, file, line, side, the commit whose diff it was written against, who wrote it and whether it has been sent; the summary; the proposed verdict.'
         + NOT_SENT,
-      inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE }, required: ['projectPath', 'change'] },
+      inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE }, required: ['project', 'change'] },
     },
     {
       name: 'read_change',
       description:
         'What a pull or merge request is, read from the tracker now: title, state, author, head commit, its commits oldest first (id, title, author), and the files the whole change touches with added and removed counts. '
         + 'Start here; the commit ids it prints are what read_diff and add_comment take.',
-      inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE }, required: ['projectPath', 'change'] },
+      inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE }, required: ['project', 'change'] },
     },
     {
       name: 'read_diff',
@@ -369,7 +389,7 @@ function tools() {
           path: { type: 'string', description: 'Print only this file.' },
           max_lines: { type: 'integer', description: `How many diff lines to print, at most ${MAX_DIFF_LINES}.` },
         },
-        required: ['projectPath', 'change'],
+        required: ['project', 'change'],
       },
     },
     {
@@ -387,7 +407,7 @@ function tools() {
           side: { type: 'string', enum: ['new', 'old'], description: '"new" (default): the second number column, for added and unchanged lines. "old": the first, for removed lines.' },
           body: { type: 'string', description: `The comment, as it would be posted. Markdown. At most ${MAX_BODY} characters.` },
         },
-        required: ['projectPath', 'change', 'path', 'line', 'body'],
+        required: ['project', 'change', 'path', 'line', 'body'],
       },
     },
     {
@@ -396,13 +416,13 @@ function tools() {
       inputSchema: {
         type: 'object',
         properties: { ...PROJECT, ...CHANGE, id: { type: 'string', description: 'The comment’s id.' }, body: { type: 'string', description: 'The new words.' } },
-        required: ['projectPath', 'change', 'id', 'body'],
+        required: ['project', 'change', 'id', 'body'],
       },
     },
     {
       name: 'drop_comment',
       description: 'Remove a draft comment, by its id from read_review. A comment that has been sent cannot be dropped from here.' + NOT_SENT,
-      inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE, id: { type: 'string', description: 'The comment’s id.' } }, required: ['projectPath', 'change', 'id'] },
+      inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE, id: { type: 'string', description: 'The comment’s id.' } }, required: ['project', 'change', 'id'] },
     },
     {
       name: 'set_verdict',
@@ -417,7 +437,7 @@ function tools() {
           verdict: { type: 'string', enum: ['comment', 'approve', 'request-changes'], description: 'What the review concludes.' },
           summary: { type: 'string', description: `The review’s overall comment, as it would be posted. Markdown. At most ${MAX_SUMMARY} characters.` },
         },
-        required: ['projectPath', 'change'],
+        required: ['project', 'change'],
       },
     },
   ]
@@ -446,7 +466,8 @@ const need = <T,>(got: Got<T>): T => {
 }
 
 async function call(deps: Deps, name: string, args: Record<string, unknown>): Promise<string> {
-  const projectPath = typeof args.projectPath === 'string' ? args.projectPath : null
+  /* `project`, or `projectPath` as this door spelled it before the protocol agreed one name. */
+  const projectPath = doorContext(args).project
 
   if (name === 'list_reviews') {
     const drafts = need(listDrafts(projectPath))

@@ -176,7 +176,7 @@ that if the approval after it fails, a second press does not post it twice.
 
 `/mcp`, with `list_reviews`, `read_review`, `read_change`, `read_diff`,
 `add_comment`, `reword_comment`, `drop_comment`, `set_verdict`. Each takes the
-absolute `projectPath` and the change — its tracker URL, or for a change that
+absolute `project` (`projectPath`, its name before, is still read) and the change — its tracker URL, or for a change that
 already has a draft, `owner/repo#12` / `group/project!12`.
 
 `read_diff` prints the old and the new line number beside every line, because a
