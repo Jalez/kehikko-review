@@ -1,8 +1,14 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useState, type MutableRefObject } from 'react'
+
+import type { HeaderItemInput } from 'kehikot-module-protocol'
 
 import { useHost, type Host as ProtocolHost, type Where } from 'kehikot-module-protocol/client/react'
 
 import { ID } from '../../manifest.ts'
+import { headerDrawn, rememberHeaderDrawn } from '../header-fallback.tsx'
+
+/** One press on a header item: nothing or `true` for taken, a sentence for not taken, and why. */
+export type Press = (press: { item: string; value?: string | boolean }) => string | boolean | void
 
 /**
  * What the screen needs from the host, and nothing about how it arrived.
@@ -41,10 +47,24 @@ export interface Host {
   trackerAt: string | null
   /** Ask the host for something (a method from the protocol). Rejects when unhosted or refused. */
   request: ProtocolHost['request']
+  /** Declare the header items, whole (`kehikot.header`). Absent in a test that draws no header. */
+  header?(items: HeaderItemInput[]): void
+  /** Where the page puts what takes a press on one of them. */
+  presses?: MutableRefObject<Press | null>
+  /** Whether a host has ever pressed one: such a host draws the header, and the page's own control is gone. */
+  pressed?: boolean
 }
 
 export function useKehikot(): Host {
-  const host = useHost(ID)
+  const presses = useRef<Press | null>(null)
+  const [pressed, setPressed] = useState(headerDrawn)
+  const host = useHost(ID, {
+    onPress: (press) => {
+      rememberHeaderDrawn()
+      setPressed(true)
+      return presses.current ? presses.current(press) : 'There is no change open here to press on.'
+    },
+  })
   /* `selection` is the same array for as long as the host repeats the same selection. */
   const { selection } = host
   const trackerAt = host.context?.tracker?.at ?? null
@@ -59,7 +79,10 @@ export function useKehikot(): Host {
       selection,
       trackerAt,
       request: host.request,
+      header: host.header,
+      presses,
+      pressed,
     }),
-    [host.where, host.request, host.project, host.projectPath, host.epic, host.theme, selection, trackerAt],
+    [host.where, host.request, host.header, pressed, host.project, host.projectPath, host.epic, host.theme, selection, trackerAt],
   )
 }

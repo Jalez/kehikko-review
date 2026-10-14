@@ -10,7 +10,8 @@ import { locate } from '../forge/locate.ts'
 import { App, Screen, UNHOSTED } from '../src/app.tsx'
 import { drafts } from '../src/view/holding.ts'
 import { api as realApi, type Api, type ChangeRead, type CommentInput, type Confirmed } from '../src/wire/api.ts'
-import type { Host } from '../src/wire/use-kehikot.ts'
+import type { HeaderItemInput } from 'kehikot-module-protocol'
+import type { Host, Press } from '../src/wire/use-kehikot.ts'
 
 import { COMMIT_PATCH, FIRST, GH_URL, HEAD, MERGE_BASE, PATCH } from './fake.ts'
 
@@ -45,6 +46,27 @@ const row = (ref: string, over: Record<string, unknown> = {}) => ({
 
 const reading = (over: Record<string, unknown>) => ({ at: AT, refreshing: false, sources: [], rows: [], missing: [], ...over })
 
+/* What the page declared to the host's header, whole each time, and where a press on it is taken. */
+let declared: HeaderItemInput[][] = []
+let pressing: { current: Press | null } = { current: null }
+beforeEach(() => {
+  declared = []
+  pressing = { current: null }
+})
+const header = (name: string): HeaderItemInput | undefined => declared.at(-1)?.find((item) => item.id === name)
+const optionsOf = (name: string): string[] => {
+  const item = header(name)
+  return item && 'options' in item ? item.options.map((o) => o.label) : []
+}
+/** Press a header item as the host would, inside act. */
+const press = (item: string, value?: string | boolean) => {
+  const out: { answer: unknown } = { answer: undefined }
+  act(() => {
+    out.answer = pressing.current?.({ item, value })
+  })
+  return out.answer
+}
+
 function host(over: Partial<Host> = {}, answer: unknown = reading({ rows: [row('gh#46')] })): Host {
   return {
     where: 'hosted',
@@ -55,6 +77,11 @@ function host(over: Partial<Host> = {}, answer: unknown = reading({ rows: [row('
     selection: ['gh#46'],
     trackerAt: AT,
     request: () => Promise.resolve(answer),
+    header: (items) => {
+      declared.push(items)
+    },
+    presses: pressing,
+    pressed: true,
     ...over,
   }
 }
@@ -216,9 +243,9 @@ describe('a change, with its commits and a diff', () => {
     expect(screen.getByText('open')).toBeTruthy()
     expect(screen.getByText('by Jalez')).toBeTruthy()
     expect((screen.getByText('open on the tracker') as HTMLAnchorElement).href).toBe(GH_URL)
-    const picker = screen.getByLabelText('Which changes to show') as HTMLSelectElement
-    expect([...picker.options].map((o) => o.textContent)).toEqual(['All changes', '11111111 first: lay the file down', 'f982d895 second: change it'])
-    expect(picker.value).toBe('all')
+    expect(screen.queryByLabelText('Which changes to show')).toBeNull()
+    expect(optionsOf('showing')).toEqual(['All changes', '11111111 first: lay the file down', 'f982d895 second: change it'])
+    expect(header('showing')).toMatchObject({ kind: 'switch', value: 'all' })
   })
 
   test('every file of the diff is drawn, with both line-number gutters and the marks in the text', async () => {
@@ -236,8 +263,7 @@ describe('a change, with its commits and a diff', () => {
     const { container } = await opened({
       comments: [comment({ id: 'c-1' }), comment({ id: 'c-2', view: 'commit', commit: HEAD, line: 12 }), comment({ id: 'c-3', view: 'commit', commit: HEAD, line: 11 })],
     })
-    const picker = screen.getByLabelText('Which changes to show') as HTMLSelectElement
-    expect([...picker.options].map((o) => o.textContent)).toEqual(['All changes — 1 comment', '11111111 first: lay the file down', 'f982d895 second: change it — 2 comments'])
+    expect(optionsOf('showing')).toEqual(['All changes · 1 comment', '11111111 first: lay the file down', 'f982d895 second: change it · 2 comments'])
     expect(within(container.querySelector('[data-file="src/one.ts"]') as HTMLElement).getByTestId('file-comments').textContent).toBe('1 draft')
   })
 
@@ -247,7 +273,7 @@ describe('a change, with its commits and a diff', () => {
     })
     const inline = () => [...container.querySelectorAll('.diff-inset [data-comment]')].map((c) => c.getAttribute('data-comment'))
     expect(inline()).toEqual(['c-1'])
-    fireEvent.change(screen.getByLabelText('Which changes to show'), { target: { value: HEAD } })
+    press('showing', HEAD)
     await waitFor(() => expect(calls.diff).toEqual([['all', HEAD], ['commit', HEAD]]))
     await waitFor(() => expect(inline()).toEqual(['c-2']))
     /* Both are still in the review panel, each saying which diff it belongs to. */
@@ -260,9 +286,12 @@ describe('a change, with its commits and a diff', () => {
     const two = reading({ rows: [row('gh#46'), row('gh#47', { number: 47, url: 'https://github.com/o/r/pull/47', title: 'Another' })] })
     const made = fakeApi()
     const { container } = render(<Screen host={host({ selection: ['gh#46', 'gh#47'] }, two)} api={made.api} />)
-    const group = await screen.findByRole('group', { name: 'Which change to review' })
-    expect(within(group).getByRole('button', { name: 'gh#46' }).getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(within(group).getByRole('button', { name: 'gh#47' }))
+    await waitFor(() => expect(container.querySelector('[data-ref="gh#46"]')).toBeTruthy())
+    expect(screen.queryByRole('group', { name: 'Which change to review' })).toBeNull()
+    await waitFor(() => expect(header('change')).toBeTruthy())
+    expect(header('change')).toMatchObject({ kind: 'switch', value: 'c0', options: [{ id: 'c0', label: 'gh#46' }, { id: 'c1', label: 'gh#47' }] })
+    expect(String(press('change', 'c9'))).toContain('no longer')
+    press('change', 'c1')
     await waitFor(() => expect(container.querySelector('[data-ref="gh#47"]')).toBeTruthy())
     expect(container.querySelector('[data-ref="gh#46"]')).toBeNull()
   })
@@ -323,7 +352,7 @@ describe('composing a comment', () => {
 
   test('in a commit’s view the comment is anchored to that commit', async () => {
     const { calls } = await opened()
-    fireEvent.change(screen.getByLabelText('Which changes to show'), { target: { value: HEAD } })
+    press('showing', HEAD)
     await waitFor(() => expect(calls.diff).toHaveLength(2))
     fireEvent.click(await screen.findByRole('button', { name: 'Comment on new line 12 of src/one.ts' }))
     fireEvent.change(screen.getByLabelText('Comment on new line 12 of src/one.ts', { selector: 'textarea' }), { target: { value: 'In this commit.' } })
@@ -635,18 +664,17 @@ describe('typed words are held across a reload, aimed at what they were typed on
     const view = render(<Screen host={host()} api={made.api} />)
     await waitFor(() => expect(view.container.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
     await screen.findByRole('region', { name: 'Your review' })
-    const select = () => screen.getByLabelText('Which changes to show') as HTMLSelectElement
     const boxes = () => [...view.container.querySelectorAll('textarea[id^="box-Comment on"]')] as HTMLTextAreaElement[]
 
     fireEvent.click(screen.getByRole('button', { name: LINE }))
     fireEvent.change(box(), { target: { value: 'Typed, then the view was switched.' } })
-    fireEvent.change(select(), { target: { value: FIRST } })
+    press('showing', FIRST)
     await waitFor(() => expect(view.container.querySelector('[data-file="src/zero.ts"]')).toBeTruthy())
     /* Away: no box on this diff, which is another diff. The words are still held. */
     expect(boxes()).toEqual([])
     expect(held()).toHaveLength(1)
 
-    fireEvent.change(select(), { target: { value: 'all' } })
+    press('showing', 'all')
     await waitFor(() => expect(view.container.querySelector('[data-file="src/gone.ts"]')).toBeTruthy())
     expect(boxes().map((one) => [one.id, one.value])).toEqual([[`box-${LINE}`, 'Typed, then the view was switched.']])
     expect(screen.queryByTestId('kept-words')).toBeNull()
@@ -737,5 +765,46 @@ describe('typed words are held across a reload, aimed at what they were typed on
     await opened({ summary: 'an agent wrote this summary' })
     expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe('my unsaved words')
     expect(screen.getByTestId('summary-stale').textContent).toContain('an agent wrote this summary')
+  })
+})
+
+describe('the header: what the host draws in the container’s own row', () => {
+  test('typing in a comment declares nothing again', async () => {
+    await opened()
+    fireEvent.click(await screen.findByRole('button', { name: 'Comment on new line 12 of src/one.ts' }))
+    const before = declared.length
+    const box = screen.getByLabelText('Comment on new line 12 of src/one.ts', { selector: 'textarea' })
+    fireEvent.change(box, { target: { value: 'a' } })
+    fireEvent.change(box, { target: { value: 'ab' } })
+    fireEvent.change(box, { target: { value: 'abc' } })
+    expect(declared.length).toBe(before)
+  })
+
+  test('a commit that is no longer the change’s is refused, in a sentence; a real one is taken', async () => {
+    await opened()
+    expect(String(press('showing', 'deadbeef'))).toContain('no longer')
+    expect(press('showing', HEAD)).toBe(true)
+    await waitFor(() => expect(header('showing')).toMatchObject({ value: HEAD }))
+  })
+
+  test('the toolbar rows are gone: no select and no row of buttons in the page', async () => {
+    const { container } = await opened()
+    expect(container.querySelector('select')).toBeNull()
+  })
+
+  test('the page’s own control is there until a host has pressed one, and not after', async () => {
+    const made = fakeApi()
+    const { container, rerender } = render(<Screen host={host({ pressed: false })} api={made.api} />)
+    await waitFor(() => expect(container.querySelector('[data-header-fallback]')).toBeTruthy())
+    rerender(<Screen host={host({ pressed: true })} api={made.api} />)
+    await waitFor(() => expect(container.querySelector('[data-header-fallback]')).toBeNull())
+  })
+
+  test('the header is taken away when the change is', async () => {
+    const made = fakeApi()
+    const view = render(<Screen host={host()} api={made.api} />)
+    await waitFor(() => expect(header('showing')).toBeTruthy())
+    view.unmount()
+    expect(declared.at(-1)).toEqual([])
   })
 })
