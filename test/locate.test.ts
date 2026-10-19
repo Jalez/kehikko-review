@@ -13,15 +13,15 @@ import { locate } from '../forge/locate.ts'
  */
 describe('locate', () => {
   test('reads a GitHub pull request', () => {
-    expect(locate('https://github.com/jaakkorajalasol/roadmap/pull/105')).toEqual({
+    expect(locate('https://github.com/jaakkorajalasol/thesis/pull/105')).toEqual({
       forge: 'github',
-      repo: 'jaakkorajalasol/roadmap',
+      repo: 'jaakkorajalasol/thesis',
       number: 105,
     })
   })
 
   test('a GitHub issue has no diff, and is not a target', () => {
-    expect(locate('https://github.com/jaakkorajalasol/roadmap/issues/131')).toBeNull()
+    expect(locate('https://github.com/jaakkorajalasol/thesis/issues/131')).toBeNull()
   })
 
   test('reads a gitlab.com merge request, and does not override GITLAB_HOST for it', () => {
