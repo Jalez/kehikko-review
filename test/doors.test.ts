@@ -464,14 +464,14 @@ describe('the MCP door', () => {
     const { tool, rpc } = world()
     const base = { projectPath: dir, change: GH_URL }
     const refusals: [string, Record<string, unknown>, string][] = [
-      ['list_reviews', {}, 'which project'],
+      ['list_reviews', {}, 'Name the project'],
       ['read_review', { projectPath: dir }, 'Say which change'],
       ['read_review', { projectPath: dir, change: 'o/r#46' }, 'no draft in this project is filed under it'],
       ['read_change', { projectPath: dir, change: 'https://github.com/o/r/issues/46' }, 'not a tracker URL'],
       ['read_diff', { ...base, commit: 'zzzzzzz' }, 'named by its id'],
       ['add_comment', { ...base, path: 'src/one.ts', line: 99, body: 'x' }, 'is not in the diff'],
       ['add_comment', { ...base, path: 'src/one.ts', line: 11 }, 'needs a body'],
-      ['add_comment', { change: GH_URL, path: 'src/one.ts', line: 11, body: 'x' }, 'which project'],
+      ['add_comment', { change: GH_URL, path: 'src/one.ts', line: 11, body: 'x' }, 'Name the project'],
       ['reword_comment', { ...base, id: 'c-nope', body: 'x' }, 'There is no comment'],
       ['drop_comment', { ...base, id: 'c-nope' }, 'There is no comment'],
       ['set_verdict', { ...base }, 'Give a verdict'],

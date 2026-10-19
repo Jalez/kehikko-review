@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { projectKey } from 'kehikot-module-protocol'
 import { probeServer } from 'kehikot-module-protocol/client'
 import { Cover, coverFor, useServerStanding } from 'kehikot-module-protocol/client/react'
 
@@ -97,12 +98,13 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
           /* Keyed by the change: another change is another review, and no
              state of this one — the view, a half-picked range, a confirmation
              in progress — may carry over to it. */
-          key={`${host.projectPath ?? ''}|${row.url}`}
+          key={`${projectKey(host)?.key ?? ''}|${row.url}`}
           refName={refName}
           url={row.url}
           title={row.title}
           hintHead={row.head}
           projectPath={host.projectPath}
+          projectId={host.projectId}
           api={api}
           round={round}
           chrome={{ header: host.header, presses: host.presses, drawn: host.where === 'hosted' && Boolean(host.pressed), changes, onChange: setPicked }}

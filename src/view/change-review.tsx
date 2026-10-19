@@ -17,6 +17,7 @@ import { CommentCard, Composer } from './comment.tsx'
 import { FileSection, type Pick } from './file-diff.tsx'
 import { HoldingContext, drafts, type Holding } from './holding.ts'
 import { ReviewPanel } from './review-panel.tsx'
+import { heldAtProject } from '../wire/held-at-project.ts'
 
 /**
  * One change, being reviewed: its header and commit picker, the diff of the
@@ -81,6 +82,7 @@ export function ChangeReview({
   title,
   hintHead,
   projectPath,
+  projectId = null,
   api,
   round = 0,
   chrome,
@@ -94,6 +96,8 @@ export function ChangeReview({
   /** The head the host's reading last heard, if any. Not trusted as the head — only as a reason to ask the forge again. */
   hintHead: string | null
   projectPath: string | null
+  /** The project's id: drafts are held by it, so a renamed folder keeps them. */
+  projectId?: string | null
   api: Api
   /** Bumped by the page when its own server is back after not answering: whatever failed here is asked again. */
   round?: number
@@ -229,7 +233,7 @@ export function ChangeReview({
    * out, or on the draft re-read every twenty seconds — and without this a comment half written
    * went with it.
    */
-  const here = projectPath ? drafts.at(projectPath) : null
+  const here = heldAtProject(drafts, { projectId, projectPath }) ?? null
   const holding = useMemo<Holding>(
     () => ({
       read: (target) => here?.read(`${url}|${target}`) ?? null,
