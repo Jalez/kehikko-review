@@ -29,6 +29,8 @@ export interface Host {
   project: string | null
   /** The absolute directory of the open project. Where this module keeps its drafts. */
   projectPath: string | null
+  /** The project's permanent id (host 2.1.0+), the same after the folder is renamed. Null from an older host. */
+  projectId?: string | null
   epic: string | null
   theme: 'light' | 'dark'
   /**
@@ -74,6 +76,7 @@ export function useKehikot(): Host {
       where: host.where,
       project: host.project,
       projectPath: host.projectPath,
+      projectId: host.projectId,
       epic: host.epic,
       theme: host.theme,
       selection,
@@ -83,6 +86,6 @@ export function useKehikot(): Host {
       presses,
       pressed,
     }),
-    [host.where, host.request, host.header, pressed, host.project, host.projectPath, host.epic, host.theme, selection, trackerAt],
+    [host.where, host.request, host.header, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
   )
 }

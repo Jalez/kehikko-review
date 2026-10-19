@@ -1,5 +1,5 @@
-import { KEHIKOT_DIR, doorContext } from 'kehikot-module-protocol'
-import { establishBuild, mintTicket, refuseTicket, type Reply } from 'kehikot-module-protocol/serve'
+import { KEHIKOT_DIR } from 'kehikot-module-protocol'
+import { DOOR_PROJECT_SAYS, establishBuild, mintTicket, refuseTicket, resolveDoorProject, type Reply } from 'kehikot-module-protocol/serve'
 
 import { locate, type Target } from './forge/locate.ts'
 import { commits as readCommits, describe, diff, held, isSha, login, type Commit, type Described, type Range } from './forge/read.ts'
@@ -467,8 +467,16 @@ const need = <T,>(got: Got<T>): T => {
 
 async function call(deps: Deps, name: string, args: Record<string, unknown>): Promise<string> {
   /* `project`, or `projectPath` as this door spelled it before the protocol agreed one name. */
-  const projectPath = doorContext(args).project
+  /* Whether this is a tool at all is settled before the project is. */
+  if (!tools().some((tool) => tool.name === name)) throw new Error(`no tool "${name.slice(0, 60)}" here`)
+  const at = await resolveDoorProject(args)
+  if (!at.ok) throw new Error(at.why)
+  const projectPath = at.path
+  const followed = at.movedFrom ? `\n\n${DOOR_PROJECT_SAYS.followed(at.movedFrom, at.path)}` : ''
+  return (await callAt(deps, name, args, projectPath)) + followed
+}
 
+async function callAt(deps: Deps, name: string, args: Record<string, unknown>, projectPath: string): Promise<string> {
   if (name === 'list_reviews') {
     const drafts = need(listDrafts(projectPath))
     if (!drafts.length) return 'No draft reviews are kept in that project yet. add_comment or set_verdict on a change starts one.'
@@ -642,8 +650,11 @@ export async function answer(
     }
 
     if (path === '/api/draft') {
-      const draft = readDraftFor(query.get('projectPath'), target)
-      return draft.ok ? ok({ draft: draft.value }) : bad(draft.error)
+      const asked = query.get('projectPath')
+      const at = asked?.trim() ? await resolveDoorProject(asked) : null
+      if (at && !at.ok) return bad(at.why)
+      const draft = readDraftFor(at ? at.path : asked, target)
+      return draft.ok ? ok({ draft: draft.value, ...(at?.movedFrom ? { said: DOOR_PROJECT_SAYS.followed(at.movedFrom, at.path) } : {}) }) : bad(draft.error)
     }
 
     if (path === '/api/login') return ok({ login: await login(deps.run, target) })
@@ -661,8 +672,13 @@ export async function answer(
 
   const target = locate(str(body.url, 600))
   if (!target) return bad(NOT_A_CHANGE)
-  const projectPath = str(body.projectPath, 4096)
-  const wrote = (got: Got<Draft>): Reply => (got.ok ? ok({ draft: got.value }) : bad(got.error))
+  /* The folder the page names is put to the host; only the path it vouches for is written under. */
+  const named = str(body.projectPath, 4096)
+  const at = named?.trim() ? await resolveDoorProject(named) : null
+  if (at && !at.ok) return bad(at.why)
+  const projectPath = at ? at.path : named
+  const said = at?.movedFrom ? { said: DOOR_PROJECT_SAYS.followed(at.movedFrom, at.path) } : {}
+  const wrote = (got: Got<Draft>): Reply => (got.ok ? ok({ draft: got.value, ...said }) : bad(got.error))
 
   if (path === '/api/comment') {
     const view = body.view === 'commit' ? 'commit' : body.view === 'all' ? 'all' : null
