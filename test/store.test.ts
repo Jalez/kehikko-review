@@ -154,9 +154,10 @@ describe('what may happen to a draft', () => {
   })
 
   test('a summary has a length, a verdict is one of three, and either can be set alone', () => {
-    expect(setVerdict(base, 'approve', undefined)).toEqual({ ok: true, draft: { ...base, verdict: 'approve' } })
-    expect(setVerdict({ ...base, verdict: 'approve' }, undefined, 'looks right')).toEqual({ ok: true, draft: { ...base, verdict: 'approve', summary: 'looks right' } })
-    expect(setVerdict({ ...base, verdict: 'approve' }, null, undefined)).toEqual({ ok: true, draft: base })
+    /* Who set each is recorded beside it: an agent may not replace what the person set. */
+    expect(setVerdict(base, 'approve', undefined)).toEqual({ ok: true, draft: { ...base, verdict: 'approve', verdictBy: 'person' } })
+    expect(setVerdict({ ...base, verdict: 'approve' }, undefined, 'looks right')).toEqual({ ok: true, draft: { ...base, verdict: 'approve', summary: 'looks right', summaryBy: 'person' } })
+    expect(setVerdict({ ...base, verdict: 'approve' }, null, undefined)).toEqual({ ok: true, draft: { ...base, verdictBy: 'person' } })
     expect(setVerdict(base, 'merge', undefined).ok).toBe(false)
     expect(setVerdict(base, undefined, 'x'.repeat(MAX_SUMMARY + 1)).ok).toBe(false)
     expect(setVerdict(base, undefined, 42).ok).toBe(false)

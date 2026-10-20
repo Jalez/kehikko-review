@@ -32,6 +32,83 @@ export type Verdict = 'comment' | 'approve' | 'request-changes'
 
 export const VERDICTS: readonly Verdict[] = ['comment', 'approve', 'request-changes']
 
+/* ------------------------------------------------------------------ *
+ * What an agent review run adds (contract C4)
+ * ------------------------------------------------------------------ */
+
+export const SEVERITIES = ['blocking', 'risk', 'nice'] as const
+export type Severity = (typeof SEVERITIES)[number]
+export const RULINGS = ['required', 'optional'] as const
+export type Ruling = (typeof RULINGS)[number]
+export const EVIDENCE_KINDS = ['line', 'test', 'doc', 'practice'] as const
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number]
+export const DOORS = ['one-way', 'two-way'] as const
+export type Door = (typeof DOORS)[number]
+
+/** A run's id: what Factory names one review run by. Letters, digits and `._:-`, so it is safe in a sentence and a file. */
+export const RUN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/
+export const MAX_EVIDENCE = 10
+export const MAX_REF = 600
+export const MAX_EVIDENCE_QUOTE = 2000
+export const MAX_CHALLENGE = 2000
+/** A ruling's reason is one line. */
+export const MAX_REASON = 600
+export const MAX_CHECKLIST = 30
+export const MAX_CHECKLIST_ITEM = 200
+/** "To get this approved:" is a short list, of exactly the required points. */
+export const MAX_PATH_STEPS = 20
+export const MAX_PATH_STEP = 600
+
+export interface Evidence {
+  kind: EvidenceKind
+  /** A line (`path:12`), a test, a document or a named practice — often a link. Shown as text; only an `https:` one is a link. */
+  ref: string
+  quote?: string
+}
+
+/**
+ * What a review run says about one of its points, beside the words that are posted.
+ * Never posted itself: it is for the person deciding whether to keep the point.
+ */
+export interface Meta {
+  run: string
+  severity: Severity
+  evidence: Evidence[]
+  /** The adversary's strongest case against the point, when it made one. */
+  challenge?: string
+  ruling: Ruling
+  /** The judge's one-line reason. */
+  reason: string
+  /** Checklist items the point bears on. */
+  checklist?: string[]
+  /**
+   * The head the change had when this comment was written, as the forge said. Stamped by the
+   * server, never taken from the caller: it is what the Factory send compares against "now".
+   */
+  head?: string
+}
+
+/**
+ * A run's summary and verdict, kept BESIDE the person's and never over them. The person can take
+ * either with one press; Factory can send it only through its own door, and only when it may.
+ */
+export interface Proposal {
+  run: string
+  summary: string
+  verdict: Verdict
+  door: Door
+  uiux: boolean
+  /** The required points, as a numbered list a person can work through. */
+  pathToSuccess: string[]
+  /** The head when it was proposed, as the forge said. */
+  head: string
+  at: string
+  /** When the person took its summary or its verdict into their own. */
+  taken?: { summary?: string; verdict?: string }
+  /** When Factory sent it, and at which head. */
+  sent?: { at: string; head: string }
+}
+
 export interface Sent {
   at: string
   /** Where the tracker put it, when it said. */
@@ -87,6 +164,8 @@ export interface Comment {
   at: string
   editedAt?: string
   sent?: Sent
+  /** Present on a point a review run wrote. */
+  meta?: Meta
 }
 
 export interface SentRecord {
@@ -117,6 +196,14 @@ export interface Draft {
   summary: string
   verdict: Verdict | null
   sent: SentRecord[]
+  /**
+   * Who last set the summary and the verdict. Absent on a draft from before these were kept; a
+   * summary or verdict there is read as the person's, which is the safe reading.
+   */
+  summaryBy?: By
+  verdictBy?: By
+  /** The latest review run's proposed summary and verdict. */
+  proposal?: Proposal
 }
 
 /** The address of a change as a tracker's own URL, rebuilt from the parts so it never carries a query or a fragment. */
