@@ -61,8 +61,8 @@ The same flow serves two uses:
 
 ## Non-goals
 
-- No merging, approving on GitHub/GitLab, or posting without the person. Every
-  review waits for the person (no auto-post in v1; the person decided).
+- No merging. Posting without the person only as described in "One-way and
+  two-way changes" below.
 - No review without a forge change: reviewing your own work first means opening
   a (draft) PR/MR (the person decided). `/review-factory` refuses anything else,
   in plain words.
@@ -222,6 +222,82 @@ Factory already has angle planning, prompts, parsers and judge rules in
 parameterised for this shape (two reviewers, one adversary over all points, one
 judge). No extraction into the protocol is needed.
 
+## One-way and two-way changes (the person's distinction)
+
+Every run first classifies the change, with its reasons, as:
+
+- **one-way**: hard or impossible to undo — database migrations, deleting data,
+  public API or file-format changes, auth and permissions, deploy and
+  infrastructure, dependency or licence changes, anything shipped to users that
+  cannot be recalled;
+- **two-way**: cheap to undo.
+
+When in doubt it is one-way. The person can pin project rules ("anything under
+`migrations/` is one-way", "label `two-way` means two-way"), stored in Factory's
+project settings; the planner applies them before its own judgement.
+
+**UI/UX changes always need the person**, whatever their door: the AI often gets
+them wrong. An MR that touches what people see must include **before and after
+pictures**; missing ones are a required point whose path to success names the
+screens to capture. Review gains a **Before / after** view that pulls the images
+from the MR's description and comments and shows them side by side next to the
+diff. (The Browser module can take screenshots; nothing displays an MR's
+pictures yet.)
+
+**Two-way, no UI/UX:** with the project switch "Post two-way reviews by myself"
+(off by default), the review is posted without the person. *Designer's call:* it
+may also **approve** when the judge rules no required points. The person sees
+everything afterwards on the Reviews board and in the record.
+
+**One-way:** nothing is posted until the person has understood it. Besides the
+points, the run writes a **decision briefing**: every important decision the
+change makes, the alternatives, why this one; the risks and what cannot be
+undone; and what the person should check in the functionality themselves. Not
+every line. With Paper present it is a paper in the change's epic; otherwise a
+document in the record. Flows diagrams illustrate it where they help. The
+ordinary bad practices are still caught by the reviewers, so the person can focus
+on the functionality.
+
+How posting works without the page: Review gains a send path that only Factory
+can use (a per-install secret in Review's machine-level module folder, readable
+only by the user, presented by Factory), refused for one-way or UI/UX changes and
+for anything with required points unless the verdict is "changes requested". The
+builder hardens it; agents' MCP access never gains send.
+
+## A path to success, always
+
+- Every review that does not approve ends with **"To get this approved:"** — a
+  short numbered list of exactly the required points. Doing those gets it approved.
+- **No moving goalposts:** a re-review judges only what changed since the last
+  review and whether the listed points were met. New points only about new code.
+- The only exception is **closing**: a "close this MR" verdict needs the two
+  reviewers, the challenger and the judge to agree unanimously, and says why and
+  what to do instead.
+
+## When to review again (per person)
+
+Teams and people differ in how they say "ready for another look". Factory keeps
+**re-review rules per author** (per project; "use for all projects" optional),
+each a plain sentence the person gave plus its parsed form, e.g.
+
+- "when they re-request review" (GitHub/GitLab re-request);
+- "run a re-review 2 hours after the last push, if there are new commits";
+- "when they comment 'ready'", "when the label `ready-for-review` is added";
+- "only when I ask".
+
+The first time a change from an author with no rule needs a re-review, Factory
+**asks the person** — an Inbox item and on the card: "We haven't reviewed
+<author>'s work before. What's the signal that they're ready for another review?"
+with a recommended answer (the project's default rule) to accept with one press,
+or a sentence to type. The project default starts as "when they re-request
+review, or 2 hours after the last push with new commits and every point answered".
+
+Re-reviews then run without the person: Factory starts a background Claude Code
+session for it (project switch "Re-review by myself", off by default), capped at
+3 rounds per MR so it cannot loop. Kehikot's tracker reading gains what these
+signals need: review requests (above), resolved/unresolved discussion counts, and
+the time of the last push.
+
 ## Running code
 
 Reviewers **read** by default: the diff, and files at the pinned head in the
@@ -242,15 +318,18 @@ decided). Agents never change a state the person set.
 0. Checklist: the failed and not-applicable states (MCP `check_item` gains a
    `state`; the page shows them; old ticks read as passed).
 1. Protocol: row people/roles (minor bump). Tag.
-2. Host: reviewers, "me", `myRoles`.
+2. Host: reviewers, "me", `myRoles`, resolved/unresolved discussion counts,
+   last-push time.
 3. References: My role column and filter.
-4. Review: draft comments carry agent point metadata (severity, evidence,
+4. Review: the Before / after view; the Factory-only send path; draft comments carry agent point metadata (severity, evidence,
    challenge, ruling) and show it; the agent-comment fix; `read_change` gains
    reviewers/approvals; a link to Factory's record.
 5. Factory: `/review-factory` skill, review state machine, validation, the
    Reviews board, writing into Review's draft (Review's MCP tools) and Checklist
    (Checklist's MCP tools), Flows diagrams, the
-   "may run tests" switch.
+   "may run tests" switch, door classification and project rules, the decision
+   briefing (Paper when present), "post two-way reviews by myself", per-author
+   re-review rules with the first-time question, background re-review sessions.
 
 ## Left to the builder
 
