@@ -77,7 +77,7 @@ describe('reading a change', () => {
     const got = await describeChange(fake(githubReads).run, gh)
     expect(got).toEqual({
       ok: true,
-      value: { head: HEAD, base: BASE, start: BASE, title: 'feat: an official module list', state: 'open', draft: false, author: 'Jalez', url: 'https://github.com/o/r/pull/46' },
+      value: { head: HEAD, base: BASE, start: BASE, title: 'feat: an official module list', state: 'open', draft: false, author: 'Jalez', url: 'https://github.com/o/r/pull/46', description: '', requested: [] },
     })
     const merged = await describeChange(fake(() => JSON.stringify({ ...JSON.parse(GH_PULL), state: 'closed', merged: true })).run, gh)
     expect(merged.ok && merged.value.state).toBe('merged')
@@ -87,7 +87,7 @@ describe('reading a change', () => {
     const got = await describeChange(fake(() => GL_MR).run, gl)
     expect(got).toEqual({
       ok: true,
-      value: { head: HEAD, base: MERGE_BASE, start: BASE, title: 'Draft: tidy the parser', state: 'open', draft: true, author: 'ada', url: GL_URL },
+      value: { head: HEAD, base: MERGE_BASE, start: BASE, title: 'Draft: tidy the parser', state: 'open', draft: true, author: 'ada', url: GL_URL, description: '', requested: [] },
     })
   })
 

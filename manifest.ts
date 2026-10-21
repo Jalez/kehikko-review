@@ -122,6 +122,7 @@ export const MANIFEST: Manifest = manifestSchema.parse({
     + 'lines; the diff prints an old and a new line number beside every line, and those are what you cite. '
     + 'Use `add_comment` to put a draft comment on a line — give `commit` when you mean a line of one commit’s own '
     + 'diff, leave it out for the whole change — and `set_verdict` to propose a summary and a verdict. '
+    + 'What the person wrote is theirs: you cannot reword, remove or replace it. '
     + 'Everything you write is a DRAFT in the project, marked as written by an agent. Nothing you do here is '
     + 'posted to GitHub or GitLab: only the person sends a review, from the page, after reading it. So write '
     + 'comments you would stand behind if they were sent as they are, and do not post review comments with '

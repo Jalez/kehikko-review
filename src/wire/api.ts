@@ -3,6 +3,7 @@ import { answered, ask } from 'kehikot-module-protocol/client'
 import type { Target } from '../../forge/locate.ts'
 import type { Commit, Described, Patch } from '../../forge/read.ts'
 import type { Report } from '../../review/send.ts'
+import type { Shots } from '../../review/shots.ts'
 import type { Draft, Side, Verdict, View } from '../../review/shape.ts'
 
 /**
@@ -58,6 +59,10 @@ export interface Api {
   /** `undefined` leaves a field as it is; `null` clears the verdict. */
   setVerdict(projectPath: string, url: string, verdict: Verdict | null | undefined, summary: string | undefined): Promise<Draft>
   send(projectPath: string, url: string, confirmed: Confirmed): Promise<{ draft: Draft; report: Report }>
+  /** The person takes a review run's proposed summary or verdict into their own. `run` is the proposal they were shown. */
+  takeProposal(projectPath: string, url: string, which: 'summary' | 'verdict', run: string): Promise<Draft>
+  /** The change's before/after pictures, already judged safe to show by the server (`review/shots.ts`). */
+  shots(url: string): Promise<{ shots: Shots; unread?: string }>
 }
 
 type Body = { ok?: boolean; error?: string } & Record<string, unknown>
@@ -82,6 +87,11 @@ export const api: Api = {
   reword: async (projectPath, url, id, body) => (await post('comment/reword', { projectPath, url, id, body })).draft as Draft,
   drop: async (projectPath, url, id) => (await post('comment/drop', { projectPath, url, id })).draft as Draft,
   setVerdict: async (projectPath, url, verdict, summary) => (await post('verdict', { projectPath, url, verdict, summary })).draft as Draft,
+  takeProposal: async (projectPath, url, which, run) => (await post('proposal/take', { projectPath, url, which, run })).draft as Draft,
+  shots: async (url) => {
+    const body = await get('shots', { url })
+    return { shots: body.shots as Shots, ...(typeof body.unread === 'string' ? { unread: body.unread } : {}) }
+  },
   send: async (projectPath, url, confirmed) => {
     const body = await post('send', { projectPath, url, ...confirmed })
     return { draft: body.draft as Draft, report: body.report as Report }

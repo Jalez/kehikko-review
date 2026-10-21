@@ -4,7 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { HostRefused, PAGE_OLD, resetServerStanding } from 'kehikot-module-protocol/client'
 
 import type { Report } from '../review/send.ts'
-import { emptyDraft } from '../review/draft.ts'
+import { emptyDraft, proposalBody } from '../review/draft.ts'
+import { shotsOf, type Shots } from '../review/shots.ts'
 import { changeOf, type Comment, type Draft } from '../review/shape.ts'
 import { locate } from '../forge/locate.ts'
 import { App, Screen, UNHOSTED } from '../src/app.tsx'
@@ -97,6 +98,8 @@ const change: ChangeRead = {
   draft: false,
   author: 'Jalez',
   url: GH_URL,
+  description: '',
+  requested: [],
   commits: [
     { sha: FIRST, title: 'first: lay the file down', author: 'Jalez', at: AT, parents: [MERGE_BASE] },
     { sha: HEAD, title: 'second: change it', author: 'Jalez', at: AT, parents: [FIRST] },
@@ -128,9 +131,24 @@ const REPORT: Report = {
   notes: ['1 comment was posted to GitHub on its line.', 'The review was submitted as “approve”.'],
 }
 
+/** The Before / after view's answer: one pair, one alone, one refused. */
+const SHOTS: Shots = shotsOf(target, [
+  { where: 'the description', text: '| Before | After |\n|---|---|\n| ![](https://github.com/a.png) | ![](https://github.com/b.png) |' },
+  { where: 'a comment by ada', text: 'Also ![menu](https://user-images.githubusercontent.com/c.png) and ![x](javascript:alert(1)) ![y](https://evil.example/y.png)' },
+])
+
 /** An `Api` held in memory. Every call is recorded; `send` posts nothing anywhere. */
 function fakeApi(start: Partial<Draft> = {}) {
-  const calls = { diff: [] as [string, string][], added: [] as CommentInput[], sent: [] as Confirmed[], verdicts: [] as unknown[][], dropped: [] as string[], reworded: [] as string[][] }
+  const calls = {
+    diff: [] as [string, string][],
+    added: [] as CommentInput[],
+    sent: [] as Confirmed[],
+    verdicts: [] as unknown[][],
+    dropped: [] as string[],
+    reworded: [] as string[][],
+    taken: [] as string[][],
+    shots: 0,
+  }
   const state = { draft: { ...emptyDraft(changeOf(target)), ...start } as Draft }
   let n = state.draft.comments.length
   const api: Api = {
@@ -161,6 +179,19 @@ function fakeApi(start: Partial<Draft> = {}) {
       calls.verdicts.push([verdict, summary])
       state.draft = { ...state.draft, ...(verdict !== undefined ? { verdict } : {}), ...(summary !== undefined ? { summary } : {}) }
       return Promise.resolve(state.draft)
+    },
+    takeProposal: (_p, _u, which, run) => {
+      calls.taken.push([which, run])
+      const p = state.draft.proposal!
+      state.draft =
+        which === 'summary'
+          ? { ...state.draft, summary: proposalBody(p), summaryBy: 'person' }
+          : { ...state.draft, verdict: p.verdict, verdictBy: 'person' }
+      return Promise.resolve(state.draft)
+    },
+    shots: () => {
+      calls.shots += 1
+      return Promise.resolve({ shots: SHOTS })
     },
     send: (_p, _u, confirmed) => {
       calls.sent.push(confirmed)
@@ -244,7 +275,7 @@ describe('a change, with its commits and a diff', () => {
     expect(screen.getByText('by Jalez')).toBeTruthy()
     expect((screen.getByText('open on the tracker') as HTMLAnchorElement).href).toBe(GH_URL)
     expect(screen.queryByLabelText('Which changes to show')).toBeNull()
-    expect(optionsOf('showing')).toEqual(['All changes', '11111111 first: lay the file down', 'f982d895 second: change it'])
+    expect(optionsOf('showing')).toEqual(['All changes', '11111111 first: lay the file down', 'f982d895 second: change it', 'Before / after'])
     expect(header('showing')).toMatchObject({ kind: 'switch', value: 'all' })
   })
 
@@ -263,7 +294,7 @@ describe('a change, with its commits and a diff', () => {
     const { container } = await opened({
       comments: [comment({ id: 'c-1' }), comment({ id: 'c-2', view: 'commit', commit: HEAD, line: 12 }), comment({ id: 'c-3', view: 'commit', commit: HEAD, line: 11 })],
     })
-    expect(optionsOf('showing')).toEqual(['All changes · 1 comment', '11111111 first: lay the file down', 'f982d895 second: change it · 2 comments'])
+    expect(optionsOf('showing')).toEqual(['All changes · 1 comment', '11111111 first: lay the file down', 'f982d895 second: change it · 2 comments', 'Before / after'])
     expect(within(container.querySelector('[data-file="src/one.ts"]') as HTMLElement).getByTestId('file-comments').textContent).toBe('1 draft')
   })
 
@@ -806,5 +837,107 @@ describe('the header: what the host draws in the container’s own row', () => {
     await waitFor(() => expect(header('showing')).toBeTruthy())
     view.unmount()
     expect(declared.at(-1)).toEqual([])
+  })
+})
+
+describe('a review run, on the page', () => {
+  const META = {
+    run: 'run-1',
+    severity: 'blocking' as const,
+    evidence: [
+      { kind: 'line' as const, ref: 'src/one.ts:11', quote: 'is this' },
+      { kind: 'practice' as const, ref: 'https://example.org/practice' },
+      { kind: 'doc' as const, ref: 'javascript:alert(1)' },
+    ],
+    challenge: 'It may be deliberate.',
+    ruling: 'required' as const,
+    reason: 'It breaks the parser.',
+    head: HEAD,
+  }
+  const PROPOSAL = {
+    run: 'run-1',
+    summary: 'One thing blocks this.',
+    verdict: 'request-changes' as const,
+    door: 'two-way' as const,
+    uiux: false,
+    pathToSuccess: ['Fix the parser at src/one.ts:11.', 'Add a test.'],
+    head: HEAD,
+    at: AT,
+  }
+
+  test('a point says its severity, ruling, reason, evidence and challenge, in words', async () => {
+    await opened({ comments: [comment({ id: 'c-1', by: 'agent', meta: META })] })
+    const panel = within(screen.getByRole('region', { name: 'Your review' }))
+    const point = panel.getByTestId('point')
+    expect(point.textContent).toContain('Blocking')
+    expect(point.textContent).toContain('Required')
+    expect(point.textContent).toContain('It breaks the parser.')
+    expect(point.textContent).toContain('It may be deliberate.')
+    expect(point.textContent).toContain('src/one.ts:11')
+    /* Only an https source is a link; anything else is text. */
+    const links = [...point.querySelectorAll('a')].map((a) => a.getAttribute('href'))
+    expect(links).toEqual(['https://example.org/practice'])
+    expect(point.textContent).toContain('javascript:alert(1)')
+  })
+
+  test('the proposal is beside the person’s summary, with the path to success, and is taken only when pressed', async () => {
+    const made = await opened({ summary: 'My own words.', summaryBy: 'person', proposal: PROPOSAL })
+    const box = screen.getByTestId('proposal')
+    expect(box.textContent).toContain('Proposed by review run run-1')
+    expect(box.textContent).toContain('Request changes')
+    expect(box.textContent).toContain('To get this approved:')
+    expect([...box.querySelectorAll('ol li')].map((li) => li.textContent)).toEqual(['Fix the parser at src/one.ts:11.', 'Add a test.'])
+    expect(box.textContent).toContain('Two-way')
+    /* The person's summary is untouched. */
+    expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe('My own words.')
+
+    fireEvent.click(within(box).getByRole('button', { name: 'Use this verdict' }))
+    await waitFor(() => expect(made.calls.taken).toEqual([['verdict', 'run-1']]))
+
+    /* Their own words are there, so taking the summary asks first. */
+    fireEvent.click(within(box).getByRole('button', { name: 'Use this summary' }))
+    expect(made.calls.taken).toHaveLength(1)
+    fireEvent.click(within(box).getByRole('button', { name: 'Replace your summary?' }))
+    await waitFor(() => expect(made.calls.taken).toEqual([['verdict', 'run-1'], ['summary', 'run-1']]))
+    await waitFor(() => expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe(proposalBody(PROPOSAL)))
+  })
+
+  test('a one-way or UI change says it waits for the person; a sent one says so', async () => {
+    await opened({ proposal: { ...PROPOSAL, door: 'one-way', uiux: true } })
+    const box = screen.getByTestId('proposal')
+    expect(box.textContent).toContain('One-way')
+    expect(box.textContent).toContain('what people see')
+    cleanup()
+    await opened({ proposal: { ...PROPOSAL, sent: { at: AT, head: HEAD } } })
+    expect(screen.getByTestId('proposal').textContent).toContain('Sent by Factory')
+  })
+})
+
+describe('the Before / after view', () => {
+  test('is a View option; it shows pairs side by side, and a refused picture only as text', async () => {
+    const made = await opened()
+    expect(header('showing')).toBeTruthy()
+    expect(press('showing', 'shots')).toBe(true)
+    const view = await screen.findByTestId('shots')
+    await waitFor(() => expect(view.querySelectorAll('img').length).toBe(3))
+    expect(made.calls.shots).toBe(1)
+    const pair = view.querySelector('[data-pair]')!
+    expect([...pair.querySelectorAll('img')].map((img) => img.getAttribute('src'))).toEqual(['https://github.com/a.png', 'https://github.com/b.png'])
+    expect(pair.textContent).toContain('Before')
+    expect(pair.textContent).toContain('After')
+    for (const img of view.querySelectorAll('img')) {
+      expect(img.getAttribute('src')!.startsWith('https://')).toBe(true)
+      expect(img.getAttribute('referrerpolicy')).toBe('no-referrer')
+    }
+    const refused = view.querySelector('[data-refused]')!
+    expect(refused.textContent).toContain('evil.example')
+    expect(refused.querySelector('a')).toBeNull()
+    expect(refused.querySelector('img')).toBeNull()
+    /* No diff is drawn under it. */
+    expect(document.querySelector('[data-file="src/one.ts"]')).toBeNull()
+    await waitFor(() => expect(header('showing')).toMatchObject({ value: 'shots' }))
+    /* And back. */
+    expect(press('showing', 'all')).toBe(true)
+    await waitFor(() => expect(document.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
   })
 })

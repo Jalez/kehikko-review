@@ -2,15 +2,35 @@ import { KEHIKOT_DIR } from 'kehikot-module-protocol'
 import { DOOR_PROJECT_SAYS, establishBuild, mintTicket, refuseTicket, resolveDoorProject, type Reply } from 'kehikot-module-protocol/serve'
 
 import { locate, type Target } from './forge/locate.ts'
-import { commits as readCommits, describe, diff, held, isSha, login, type Commit, type Described, type Range } from './forge/read.ts'
+import { commits as readCommits, describe, diff, held, isSha, login, notes, people, type Commit, type Described, type People, type Range } from './forge/read.ts'
 import { run as realRun, type Runner } from './forge/run.ts'
 import { ID, MANIFEST, VERSION } from './manifest.ts'
 import { anchor } from './review/anchor.ts'
-import { addComment, bodyOf, dropComment, logSend, rewordComment, setVerdict, stamp } from './review/draft.ts'
+import { addComment, bodyOf, dropComment, dropRunComments, logSend, RUN_SAYS, metaOf, ofRun, proposalOf, proposeReview, rewordComment, runOf, setVerdict, stamp, takeProposal } from './review/draft.ts'
 import { keyOf } from './review/key.ts'
+import { shotsOf } from './review/shots.ts'
 import { DEFAULT_DIFF_LINES, MAX_DIFF_LINES, printComment, printDiff, printDraft, printFiles } from './review/print.ts'
-import { execute, gather, plan, type Report } from './review/send.ts'
-import { MAX_BODY, MAX_PATH, MAX_SUMMARY, short, spell, targetOf, type By, type Draft, type Side, type View } from './review/shape.ts'
+import { execute, gather, plan, type Facts, type Report } from './review/send.ts'
+import {
+  DOORS,
+  EVIDENCE_KINDS,
+  MAX_BODY,
+  MAX_PATH,
+  MAX_PATH_STEPS,
+  MAX_SUMMARY,
+  RULINGS,
+  SEVERITIES,
+  VERDICTS,
+  short,
+  spell,
+  targetOf,
+  type By,
+  type Draft,
+  type Meta,
+  type Side,
+  type Verdict,
+  type View,
+} from './review/shape.ts'
 import { parseDiff, totals } from './src/diff/parse.ts'
 import { changeDraft, listDrafts, readDraftFor } from './store.ts'
 
@@ -75,7 +95,7 @@ export interface Deps {
   id(): string
 }
 
-const REAL: Deps = {
+export const REAL: Deps = {
   run: realRun,
   now: () => new Date().toISOString(),
   /* Short enough to read aloud to an agent and unique enough for one draft:
@@ -83,8 +103,8 @@ const REAL: Deps = {
   id: () => `c-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`,
 }
 
-const ok = (body: Record<string, unknown>): Reply => ({ status: 200, body: { ok: true, ...body } })
-const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why } })
+export const ok = (body: Record<string, unknown>): Reply => ({ status: 200, body: { ok: true, ...body } })
+export const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why } })
 
 const str = (value: unknown, max: number): string | null => (typeof value === 'string' && value.length <= max ? value : null)
 
@@ -158,7 +178,7 @@ interface CommentInput {
  * the diff of the named view is fetched (or found in the cache) — and only
  * then is the draft touched, in one synchronous step (see `changeDraft`).
  */
-async function writeComment(deps: Deps, projectPath: string | null, target: Target, input: CommentInput, by: By): Promise<Got<Draft>> {
+async function writeComment(deps: Deps, projectPath: string | null, target: Target, input: CommentInput, by: By, meta?: Meta): Promise<Got<Draft>> {
   const body = bodyOf(input.body)
   if (!body.ok) return body
   const path = str(input.path, MAX_PATH)
@@ -215,8 +235,11 @@ async function writeComment(deps: Deps, projectPath: string | null, target: Targ
     }
   }
 
+  /* A run's point is stamped with the head the forge named just now: the Factory send compares it
+     with the head at the moment of sending, and a point read at another head is not sent. */
+  const stamped = meta ? { ...meta, head: described.head } : undefined
   const written = changeDraft(projectPath, target, (draft) =>
-    addComment(draft, { view: input.view, commit: range.sha, ...(parent ? { parent } : {}), anchor: placed.anchor }, body.body, by, deps.now(), deps.id()),
+    addComment(draft, { view: input.view, commit: range.sha, ...(parent ? { parent } : {}), anchor: placed.anchor }, body.body, by, deps.now(), deps.id(), stamped),
   )
   return written
 }
@@ -237,11 +260,94 @@ async function writeComment(deps: Deps, projectPath: string | null, target: Targ
  */
 const sending = new Set<string>()
 
-async function send(deps: Deps, projectPath: string | null, target: Target, body: Record<string, unknown>): Promise<Reply> {
+/**
+ * Run `work` holding the change's send lock, or answer 409 when a send of the same change in the
+ * same project is already under way — whichever door it came through, the page's or Factory's.
+ */
+export async function underLock(projectPath: string | null, target: Target, work: () => Promise<Reply>): Promise<Reply> {
   const lock = `${projectPath ?? ''}|${keyOf(target)}`
   if (sending.has(lock)) return bad('A send for this change is already under way. Wait for it to finish.', 409)
   sending.add(lock)
   try {
+    return await work()
+  } finally {
+    sending.delete(lock)
+  }
+}
+
+/** What one send posts: these comments, this verdict, this body — and whose send it is. */
+export interface Delivery {
+  ids: string[]
+  verdict: Verdict
+  summary: string
+  /**
+   * `person`: the page's send. The person's summary is cleared the moment it is posted and the
+   * verdict once everything went. `run`: Factory's send of a review run. The person's summary and
+   * verdict are never read or written; the run's proposal is marked sent when everything went.
+   */
+  by: { kind: 'person' } | { kind: 'run'; run: string }
+  /** A last look at the change as the forge says it is now, before anything is posted. A sentence refuses (409). */
+  check?(facts: Facts): string | null
+}
+
+/**
+ * Post one review and keep the draft true about it. The forge is read fresh first; nothing is
+ * posted when it cannot be read or `check` refuses. Called inside `underLock`.
+ */
+export async function deliver(deps: Deps, projectPath: string | null, target: Target, draft: Draft, delivery: Delivery): Promise<Reply> {
+  const facts = await gather(deps.run, target, draft)
+  if (!facts.ok) return bad(`Nothing was sent. The change could not be read just before sending: ${facts.error}`, 502)
+  const refused = delivery.check?.(facts.value)
+  if (refused) return bad(`Nothing was sent. ${refused}`, 409)
+  const sendable: Draft = { ...draft, summary: delivery.summary, verdict: delivery.verdict }
+  const made = plan(target, sendable, facts.value, delivery.ids)
+  if (!made.ok) return bad(made.error)
+
+  const byPerson = delivery.by.kind === 'person'
+  const save = (change: (was: Draft) => Draft) => changeDraft(projectPath, target, (was) => ({ ok: true, draft: change(was) }))
+  const report: Report = await execute(deps.run, target, made.plan, sendable, {
+    stamp: (which, sent) => void save((was) => stamp(was, which, sent)),
+    summarySent: () => {
+      /* Cleared the moment it is posted, not at the end: if the approval
+         after it fails, pressing Send again must not post the summary twice.
+         A run's summary is its proposal's, and the person's is not touched. */
+      if (byPerson) void save((was) => ({ ...was, summary: '' }))
+    },
+    now: deps.now,
+  })
+
+  /* The history is written whenever anything reached the tracker, including
+     a send that stopped half way: that is when a record matters most. */
+  const reached = report.posted.length + report.folded.length > 0 || report.summarySent || report.verdictSent
+  const by = delivery.by
+  const after = save((was) => {
+    let settled = was
+    if (report.complete) {
+      settled = by.kind === 'person'
+        ? { ...was, verdict: null }
+        : was.proposal && was.proposal.run === by.run
+          ? { ...was, proposal: { ...was.proposal, sent: { at: deps.now(), head: made.plan.head } } }
+          : was
+    }
+    const notes = by.kind === 'run' ? [`Sent by Factory for review run ${by.run}, without the person.`, ...report.notes] : report.notes
+    return reached
+      ? logSend(
+          settled,
+          { at: deps.now(), verdict: made.plan.verdict, head: made.plan.head, comments: report.posted.length + report.folded.length, summary: delivery.summary.slice(0, MAX_SUMMARY), notes },
+          false,
+        )
+      : settled
+  })
+  if (!after.ok) {
+    /* The requests were made; only the bookkeeping failed. Say exactly that,
+       because the dangerous reading of an error here is "it did not send". */
+    return bad(`The review was sent, but the draft could not be updated afterwards: ${after.error} ${report.notes.join(' ')}`, 500)
+  }
+  return ok({ draft: after.value, report })
+}
+
+async function send(deps: Deps, projectPath: string | null, target: Target, body: Record<string, unknown>): Promise<Reply> {
+  return underLock(projectPath, target, async () => {
     const read = readDraftFor(projectPath, target)
     if (!read.ok) return bad(read.error)
     const draft = read.value
@@ -259,45 +365,10 @@ async function send(deps: Deps, projectPath: string | null, target: Target, body
     const strangers = ids.filter((id) => !unsentIds.has(id))
     const CHANGED = 'The draft changed after you looked at it, so nothing was sent. Read what it says now and confirm again.'
     if (strangers.length || body.verdict !== draft.verdict || body.summary !== draft.summary) return bad(CHANGED, 409)
+    if (!draft.verdict) return bad('Choose a verdict first: comment, approve or request changes.')
 
-    const facts = await gather(deps.run, target, draft)
-    if (!facts.ok) return bad(`Nothing was sent. The change could not be read just before sending: ${facts.error}`, 502)
-    const made = plan(target, draft, facts.value, ids)
-    if (!made.ok) return bad(made.error)
-
-    const save = (change: (was: Draft) => Draft) => changeDraft(projectPath, target, (was) => ({ ok: true, draft: change(was) }))
-    const report: Report = await execute(deps.run, target, made.plan, draft, {
-      stamp: (which, sent) => void save((was) => stamp(was, which, sent)),
-      summarySent: () => {
-        /* Cleared the moment it is posted, not at the end: if the approval
-           after it fails, pressing Send again must not post the summary twice. */
-        void save((was) => ({ ...was, summary: '' }))
-      },
-      now: deps.now,
-    })
-
-    /* The history is written whenever anything reached the tracker, including
-       a send that stopped half way: that is when a record matters most. */
-    const reached = report.posted.length + report.folded.length > 0 || report.summarySent || report.verdictSent
-    const after = save((was) => {
-      const settled = report.complete ? { ...was, verdict: null } : was
-      return reached
-        ? logSend(
-            settled,
-            { at: deps.now(), verdict: made.plan.verdict, head: made.plan.head, comments: report.posted.length + report.folded.length, summary: draft.summary.slice(0, MAX_SUMMARY), notes: report.notes },
-            false,
-          )
-        : settled
-    })
-    if (!after.ok) {
-      /* The requests were made; only the bookkeeping failed. Say exactly that,
-         because the dangerous reading of an error here is "it did not send". */
-      return bad(`The review was sent, but the draft could not be updated afterwards: ${after.error} ${report.notes.join(' ')}`, 500)
-    }
-    return ok({ draft: after.value, report })
-  } finally {
-    sending.delete(lock)
-  }
+    return deliver(deps, projectPath, target, draft, { ids, verdict: draft.verdict, summary: draft.summary, by: { kind: 'person' } })
+  })
 }
 
 /* ------------------------------------------------------------------ *
@@ -347,6 +418,8 @@ const ANNOTATIONS: Record<string, Record<string, boolean>> = {
   reword_comment: REPLACES,
   drop_comment: { ...REPLACES, idempotentHint: false },
   set_verdict: REPLACES,
+  propose_review: { ...REPLACES, openWorldHint: true },
+  drop_run_comments: REPLACES,
 }
 
 function tools() {
@@ -406,6 +479,7 @@ function listed() {
           start_line: { type: 'integer', description: 'The first line of a range, on the same side. Leave out for a single line.' },
           side: { type: 'string', enum: ['new', 'old'], description: '"new" (default): the second number column, for added and unchanged lines. "old": the first, for removed lines.' },
           body: { type: 'string', description: `The comment, as it would be posted. Markdown. At most ${MAX_BODY} characters.` },
+          meta: META_SCHEMA,
         },
         required: ['project', 'change', 'path', 'line', 'body'],
       },
@@ -440,11 +514,72 @@ function listed() {
         required: ['project', 'change'],
       },
     },
+    {
+      name: 'propose_review',
+      description:
+        'A review run’s summary and verdict, kept BESIDE the person’s and never over them: the page shows it, and the person can take the summary, the verdict, or neither. '
+        + 'A newer run’s proposal replaces an older one. door and uiux say whether the change is hard to undo and whether it touches what people see; pathToSuccess is exactly the required points, '
+        + 'shown as “To get this approved:”.'
+        + NOT_SENT,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ...PROJECT,
+          ...CHANGE,
+          run: RUN_SCHEMA,
+          summary: { type: 'string', description: `The proposed summary, as it would be posted. Markdown. At most ${MAX_SUMMARY} characters.` },
+          verdict: { type: 'string', enum: [...VERDICTS], description: 'The proposed verdict.' },
+          door: { type: 'string', enum: [...DOORS], description: 'one-way: hard or impossible to undo. two-way: cheap to undo. When in doubt, one-way.' },
+          uiux: { type: 'boolean', description: 'True when the change touches what people see.' },
+          pathToSuccess: {
+            type: 'array',
+            items: { type: 'string' },
+            maxItems: MAX_PATH_STEPS,
+            description: 'Exactly the required points, each a step a person can do. At least one when the verdict is request-changes; empty when nothing is required.',
+          },
+        },
+        required: ['project', 'change', 'run', 'summary', 'verdict', 'door', 'uiux', 'pathToSuccess'],
+      },
+    },
+    {
+      name: 'drop_run_comments',
+      description:
+        'Before a re-run: drop the unsent comments a run wrote (those added with that meta.run). Only those — never the person’s comments, never a sent one, never another run’s, and never the summary or verdict.'
+        + NOT_SENT,
+      inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE, run: RUN_SCHEMA }, required: ['project', 'change', 'run'] },
+    },
   ]
 }
 
+const RUN_SCHEMA = { type: 'string', description: 'The review run’s id, as Factory named it: letters, digits and . _ : -, at most 80.' } as const
+
+/** The contract's point metadata (C4), as an MCP schema. */
+const META_SCHEMA = {
+  type: 'object',
+  description:
+    'For a point a review run writes: who ruled what, and on which evidence. Shown to the person beside the comment; never posted. Leave out for an ordinary comment.',
+  properties: {
+    run: RUN_SCHEMA,
+    severity: { type: 'string', enum: [...SEVERITIES] },
+    evidence: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        properties: { kind: { type: 'string', enum: [...EVIDENCE_KINDS] }, ref: { type: 'string' }, quote: { type: 'string' } },
+        required: ['kind', 'ref'],
+      },
+    },
+    challenge: { type: 'string', description: 'The strongest honest case made against the point, if any.' },
+    ruling: { type: 'string', enum: [...RULINGS] },
+    reason: { type: 'string', description: 'The judge’s one-line reason.' },
+    checklist: { type: 'array', items: { type: 'string' }, description: 'Checklist items the point bears on.' },
+  },
+  required: ['run', 'severity', 'evidence', 'ruling', 'reason'],
+} as const
+
 /** The change an agent means: a tracker URL, or the short spelling of one that already has a draft here. */
-function changeFor(projectPath: string | null, given: unknown): Target {
+export function changeFor(projectPath: string | null, given: unknown): Target {
   if (typeof given !== 'string' || !given || given.length > 600) throw new Error(`Say which change, as its URL on the tracker. ${NOT_A_CHANGE}`)
   const direct = locate(given)
   if (direct) return direct
@@ -494,13 +629,14 @@ async function callAt(deps: Deps, name: string, args: Record<string, unknown>, p
 
   if (name === 'read_change') {
     const { described, commits, more } = need(await readChange(deps, target))
-    const patch = await diff(deps.run, target, { view: 'all', sha: described.head })
+    const [patch, who] = await Promise.all([diff(deps.run, target, { view: 'all', sha: described.head }), people(deps.run, target, described)])
     const files = patch.ok ? parseDiff(patch.value.text) : null
     const sum = files ? totals(files) : null
     return [
       `${spell(target)} — ${described.title}`,
       `${described.state}${described.draft ? ' (draft)' : ''}, by ${described.author || 'unknown'} — ${described.url}`,
       `Head commit: ${described.head}`,
+      ...(who.ok ? printPeople(who.value) : [`Reviewers and approvals could not be read: ${who.error}`]),
       '',
       `Commits, oldest first (${commits.length}${more ? ', and there may be more than this app lists' : ''}):`,
       ...commits.map((c) => `${short(c.sha)}  ${c.title}  — ${c.author || 'unknown'}`),
@@ -528,6 +664,8 @@ async function callAt(deps: Deps, name: string, args: Record<string, unknown>, p
   }
 
   if (name === 'add_comment') {
+    /* Checked first: a point with no evidence is refused before a subprocess is spent on it. */
+    const meta = args.meta === undefined || args.meta === null ? undefined : check(metaOf(args.meta)).meta
     const commit = typeof args.commit === 'string' && args.commit ? args.commit : null
     const draft = need(
       await writeComment(
@@ -538,6 +676,7 @@ async function callAt(deps: Deps, name: string, args: Record<string, unknown>, p
            change as it is", and that is what it is checked against. */
         { view: commit ? 'commit' : 'all', commit, path: args.path, side: args.side, line: args.line, startLine: args.start_line, body: args.body },
         'agent',
+        meta,
       ),
     )
     const added = draft.comments[draft.comments.length - 1]
@@ -547,12 +686,12 @@ async function callAt(deps: Deps, name: string, args: Record<string, unknown>, p
   if (name === 'reword_comment') {
     const body = bodyOf(args.body)
     if (!body.ok) throw new Error(body.error)
-    need(changeDraft(projectPath, target, (draft) => rewordComment(draft, args.id, body.body, deps.now())))
+    need(changeDraft(projectPath, target, (draft) => rewordComment(draft, args.id, body.body, deps.now(), 'agent')))
     return 'Reworded. Still a draft; nothing was posted.'
   }
 
   if (name === 'drop_comment') {
-    need(changeDraft(projectPath, target, (draft) => dropComment(draft, args.id)))
+    need(changeDraft(projectPath, target, (draft) => dropComment(draft, args.id, 'agent')))
     return 'Dropped from the draft. Nothing was posted or deleted on the tracker.'
   }
 
@@ -561,11 +700,56 @@ async function callAt(deps: Deps, name: string, args: Record<string, unknown>, p
     /* An agent may propose a verdict and may not clear one: `null` is the
        person's "I have not decided", and it is theirs to say. */
     if (args.verdict === null) throw new Error('A verdict is one of comment, approve, request-changes.')
-    const draft = need(changeDraft(projectPath, target, (was) => setVerdict(was, args.verdict, args.summary)))
+    const draft = need(changeDraft(projectPath, target, (was) => setVerdict(was, args.verdict, args.summary, 'agent')))
     return `Proposed: verdict “${draft.verdict ?? 'none yet'}”${draft.summary.trim() ? `, with a summary of ${draft.summary.trim().length} characters` : ', no summary'}. The person can change either, and nothing is sent until they press Send.`
   }
 
+  if (name === 'propose_review') {
+    const input = check(proposalOf(args)).proposal
+    /* Fail before spending a subprocess on a draft there is nowhere to keep. */
+    need(readDraftFor(projectPath, target))
+    const described = need(await describe(deps.run, target))
+    const draft = need(changeDraft(projectPath, target, (was) => proposeReview(was, input, described.head, deps.now())))
+    return [
+      `Proposed by run ${input.run}, at head ${short(described.head)}: verdict “${input.verdict}”, ${input.door}${input.uiux ? ', touches what people see' : ''}, `
+        + `${input.pathToSuccess.length} step${input.pathToSuccess.length === 1 ? '' : 's'} to approval.`,
+      `It is kept beside the person’s summary and verdict, which are unchanged (verdict: ${draft.verdict ?? 'none yet'}). The person can take it, or not.`,
+      'Nothing was posted.',
+    ].join('\n')
+  }
+
+  if (name === 'drop_run_comments') {
+    const run = runOf(args.run)
+    if (!run) throw new Error(RUN_SAYS)
+    let dropped = 0
+    need(
+      changeDraft(projectPath, target, (was) => {
+        dropped = was.comments.filter((c) => ofRun(c, run!)).length
+        return dropRunComments(was, run)
+      }),
+    )
+    return `Dropped ${dropped} of run ${run}’s unsent comment${dropped === 1 ? '' : 's'}. The person’s comments, sent comments, other runs’ comments, the summary and the verdict were left as they were. Nothing was posted or deleted on the tracker.`
+  }
+
   throw new Error(`no tool "${name.slice(0, 60)}" here`)
+}
+
+/** A refusal from a pure check, thrown as the sentence the agent reads. */
+function check<T extends { ok: boolean }>(got: T): Extract<T, { ok: true }> {
+  if (!got.ok) throw new Error((got as unknown as { error: string }).error)
+  return got as Extract<T, { ok: true }>
+}
+
+const STATE_WORD: Record<People['reviewers'][number]['state'], string> = { requested: 'asked', approved: 'approved', changes: 'changes requested', commented: 'commented' }
+
+/** Who reviews a change and who approved it, as two lines for an agent. */
+export function printPeople(who: People): string[] {
+  const { by, required, left } = who.approvals
+  const needed = [required !== undefined ? `${required} required` : '', left !== undefined ? `${left} still needed` : ''].filter(Boolean).join(', ')
+  return [
+    `Reviewers: ${who.reviewers.length ? who.reviewers.map((r) => `${r.login} (${STATE_WORD[r.state]})`).join(', ') : 'none asked'}`,
+    `Approvals: ${by.length ? `${by.length} — ${by.join(', ')}` : 'none'}${needed ? ` — ${needed}` : ''}`,
+  ]
 }
 
 interface Rpc {
@@ -627,6 +811,11 @@ export async function answer(
 
   if (!path.startsWith('/api/')) return null
 
+  /* Factory's send is answered by its own middleware (factory/door.ts), which reads the key from a
+     header this function is never given. Here it is not a route at all: not for the page's ticket,
+     not for anything else. */
+  if (path === '/api/factory' || path.startsWith('/api/factory/')) return bad('not here', 404)
+
   /* ---- reads: ungated. They show nothing the person's own `gh` would not. ---- */
 
   if (method === 'GET') {
@@ -658,6 +847,18 @@ export async function answer(
     }
 
     if (path === '/api/login') return ok({ login: await login(deps.run, target) })
+
+    /* The Before / after view: images from the description and the conversation, judged by
+       `shotsOf` (https on the forge's own hosts only). Nothing is fetched but the text. */
+    if (path === '/api/shots') {
+      const [described, said] = await Promise.all([describe(deps.run, target), notes(deps.run, target)])
+      if (!described.ok) return bad(described.error, 502)
+      const sources = [
+        { where: 'the description', text: described.value.description },
+        ...(said.ok ? said.value.map((note) => ({ where: `a comment by ${note.author || 'somebody'}`, text: note.body })) : []),
+      ]
+      return ok({ shots: shotsOf(target, sources), ...(said.ok ? {} : { unread: `The comments could not be read, so only the description was looked in: ${said.error}` }) })
+    }
 
     return bad('not here', 404)
   }
@@ -703,6 +904,13 @@ export async function answer(
   if (path === '/api/comment/drop') return wrote(changeDraft(projectPath, target, (draft) => dropComment(draft, body.id)))
 
   if (path === '/api/verdict') return wrote(changeDraft(projectPath, target, (draft) => setVerdict(draft, body.verdict, body.summary)))
+
+  /* The person takes a run's proposed summary or verdict into their own: their press, their words. */
+  if (path === '/api/proposal/take') {
+    const which = body.which === 'summary' || body.which === 'verdict' ? body.which : null
+    if (!which) return bad('Take the summary or the verdict.')
+    return wrote(changeDraft(projectPath, target, (draft) => takeProposal(draft, which, body.run, deps.now())))
+  }
 
   if (path === '/api/send') return send(deps, projectPath, target, body)
 

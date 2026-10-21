@@ -1,5 +1,5 @@
 import type { Target } from '../forge/locate.ts'
-import { commits as readCommits, describe, ghApi, glabApi, isSha, type Read } from '../forge/read.ts'
+import { commits as readCommits, describe, ghApi, glabApi, isSha, type ChangeState, type Read } from '../forge/read.ts'
 import type { Ran, Run, Runner } from '../forge/run.ts'
 
 import { short, type Comment, type Draft, type Sent, type Verdict } from './shape.ts'
@@ -80,6 +80,8 @@ import { short, type Comment, type Draft, type Sent, type Verdict } from './shap
 /** What has to be known about the change at the moment of sending. Read fresh; see `gather`. */
 export interface Facts {
   head: string
+  /** Open, closed or merged, as the forge said just now. */
+  state?: ChangeState
   base: string
   start: string
   /** The change's commits, with parents: what decides how an old-side commit comment maps on GitHub. */
@@ -611,6 +613,7 @@ export async function gather(run: Runner, target: Target, draft: Draft): Promise
   if (!listed.ok) return listed
   const facts: Facts = {
     head: described.value.head,
+    state: described.value.state,
     base: described.value.base,
     start: described.value.start,
     commits: listed.value.commits.map((c) => ({ sha: c.sha, parents: c.parents })),
