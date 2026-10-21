@@ -1,6 +1,6 @@
 {
   "name": "kehikko-review",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Review, a module a kehikko host frames. An app: its own store, its own page, its own port.",
