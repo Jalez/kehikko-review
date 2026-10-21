@@ -9,7 +9,7 @@ import { anchor } from './review/anchor.ts'
 import { addComment, bodyOf, dropComment, dropRunComments, logSend, RUN_SAYS, metaOf, ofRun, proposalOf, proposeReview, rewordComment, runOf, setVerdict, stamp } from './review/draft.ts'
 import { keyOf } from './review/key.ts'
 import { DEFAULT_DIFF_LINES, MAX_DIFF_LINES, printComment, printDiff, printDraft, printFiles } from './review/print.ts'
-import { execute, gather, plan, type Report } from './review/send.ts'
+import { execute, gather, plan, type Facts, type Report } from './review/send.ts'
 import {
   DOORS,
   EVIDENCE_KINDS,
@@ -27,6 +27,7 @@ import {
   type Draft,
   type Meta,
   type Side,
+  type Verdict,
   type View,
 } from './review/shape.ts'
 import { parseDiff, totals } from './src/diff/parse.ts'
@@ -93,7 +94,7 @@ export interface Deps {
   id(): string
 }
 
-const REAL: Deps = {
+export const REAL: Deps = {
   run: realRun,
   now: () => new Date().toISOString(),
   /* Short enough to read aloud to an agent and unique enough for one draft:
@@ -101,8 +102,8 @@ const REAL: Deps = {
   id: () => `c-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`,
 }
 
-const ok = (body: Record<string, unknown>): Reply => ({ status: 200, body: { ok: true, ...body } })
-const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why } })
+export const ok = (body: Record<string, unknown>): Reply => ({ status: 200, body: { ok: true, ...body } })
+export const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why } })
 
 const str = (value: unknown, max: number): string | null => (typeof value === 'string' && value.length <= max ? value : null)
 
@@ -258,11 +259,94 @@ async function writeComment(deps: Deps, projectPath: string | null, target: Targ
  */
 const sending = new Set<string>()
 
-async function send(deps: Deps, projectPath: string | null, target: Target, body: Record<string, unknown>): Promise<Reply> {
+/**
+ * Run `work` holding the change's send lock, or answer 409 when a send of the same change in the
+ * same project is already under way — whichever door it came through, the page's or Factory's.
+ */
+export async function underLock(projectPath: string | null, target: Target, work: () => Promise<Reply>): Promise<Reply> {
   const lock = `${projectPath ?? ''}|${keyOf(target)}`
   if (sending.has(lock)) return bad('A send for this change is already under way. Wait for it to finish.', 409)
   sending.add(lock)
   try {
+    return await work()
+  } finally {
+    sending.delete(lock)
+  }
+}
+
+/** What one send posts: these comments, this verdict, this body — and whose send it is. */
+export interface Delivery {
+  ids: string[]
+  verdict: Verdict
+  summary: string
+  /**
+   * `person`: the page's send. The person's summary is cleared the moment it is posted and the
+   * verdict once everything went. `run`: Factory's send of a review run. The person's summary and
+   * verdict are never read or written; the run's proposal is marked sent when everything went.
+   */
+  by: { kind: 'person' } | { kind: 'run'; run: string }
+  /** A last look at the change as the forge says it is now, before anything is posted. A sentence refuses (409). */
+  check?(facts: Facts): string | null
+}
+
+/**
+ * Post one review and keep the draft true about it. The forge is read fresh first; nothing is
+ * posted when it cannot be read or `check` refuses. Called inside `underLock`.
+ */
+export async function deliver(deps: Deps, projectPath: string | null, target: Target, draft: Draft, delivery: Delivery): Promise<Reply> {
+  const facts = await gather(deps.run, target, draft)
+  if (!facts.ok) return bad(`Nothing was sent. The change could not be read just before sending: ${facts.error}`, 502)
+  const refused = delivery.check?.(facts.value)
+  if (refused) return bad(`Nothing was sent. ${refused}`, 409)
+  const sendable: Draft = { ...draft, summary: delivery.summary, verdict: delivery.verdict }
+  const made = plan(target, sendable, facts.value, delivery.ids)
+  if (!made.ok) return bad(made.error)
+
+  const byPerson = delivery.by.kind === 'person'
+  const save = (change: (was: Draft) => Draft) => changeDraft(projectPath, target, (was) => ({ ok: true, draft: change(was) }))
+  const report: Report = await execute(deps.run, target, made.plan, sendable, {
+    stamp: (which, sent) => void save((was) => stamp(was, which, sent)),
+    summarySent: () => {
+      /* Cleared the moment it is posted, not at the end: if the approval
+         after it fails, pressing Send again must not post the summary twice.
+         A run's summary is its proposal's, and the person's is not touched. */
+      if (byPerson) void save((was) => ({ ...was, summary: '' }))
+    },
+    now: deps.now,
+  })
+
+  /* The history is written whenever anything reached the tracker, including
+     a send that stopped half way: that is when a record matters most. */
+  const reached = report.posted.length + report.folded.length > 0 || report.summarySent || report.verdictSent
+  const by = delivery.by
+  const after = save((was) => {
+    let settled = was
+    if (report.complete) {
+      settled = by.kind === 'person'
+        ? { ...was, verdict: null }
+        : was.proposal && was.proposal.run === by.run
+          ? { ...was, proposal: { ...was.proposal, sent: { at: deps.now(), head: made.plan.head } } }
+          : was
+    }
+    const notes = by.kind === 'run' ? [`Sent by Factory for review run ${by.run}, without the person.`, ...report.notes] : report.notes
+    return reached
+      ? logSend(
+          settled,
+          { at: deps.now(), verdict: made.plan.verdict, head: made.plan.head, comments: report.posted.length + report.folded.length, summary: delivery.summary.slice(0, MAX_SUMMARY), notes },
+          false,
+        )
+      : settled
+  })
+  if (!after.ok) {
+    /* The requests were made; only the bookkeeping failed. Say exactly that,
+       because the dangerous reading of an error here is "it did not send". */
+    return bad(`The review was sent, but the draft could not be updated afterwards: ${after.error} ${report.notes.join(' ')}`, 500)
+  }
+  return ok({ draft: after.value, report })
+}
+
+async function send(deps: Deps, projectPath: string | null, target: Target, body: Record<string, unknown>): Promise<Reply> {
+  return underLock(projectPath, target, async () => {
     const read = readDraftFor(projectPath, target)
     if (!read.ok) return bad(read.error)
     const draft = read.value
@@ -280,45 +364,10 @@ async function send(deps: Deps, projectPath: string | null, target: Target, body
     const strangers = ids.filter((id) => !unsentIds.has(id))
     const CHANGED = 'The draft changed after you looked at it, so nothing was sent. Read what it says now and confirm again.'
     if (strangers.length || body.verdict !== draft.verdict || body.summary !== draft.summary) return bad(CHANGED, 409)
+    if (!draft.verdict) return bad('Choose a verdict first: comment, approve or request changes.')
 
-    const facts = await gather(deps.run, target, draft)
-    if (!facts.ok) return bad(`Nothing was sent. The change could not be read just before sending: ${facts.error}`, 502)
-    const made = plan(target, draft, facts.value, ids)
-    if (!made.ok) return bad(made.error)
-
-    const save = (change: (was: Draft) => Draft) => changeDraft(projectPath, target, (was) => ({ ok: true, draft: change(was) }))
-    const report: Report = await execute(deps.run, target, made.plan, draft, {
-      stamp: (which, sent) => void save((was) => stamp(was, which, sent)),
-      summarySent: () => {
-        /* Cleared the moment it is posted, not at the end: if the approval
-           after it fails, pressing Send again must not post the summary twice. */
-        void save((was) => ({ ...was, summary: '' }))
-      },
-      now: deps.now,
-    })
-
-    /* The history is written whenever anything reached the tracker, including
-       a send that stopped half way: that is when a record matters most. */
-    const reached = report.posted.length + report.folded.length > 0 || report.summarySent || report.verdictSent
-    const after = save((was) => {
-      const settled = report.complete ? { ...was, verdict: null } : was
-      return reached
-        ? logSend(
-            settled,
-            { at: deps.now(), verdict: made.plan.verdict, head: made.plan.head, comments: report.posted.length + report.folded.length, summary: draft.summary.slice(0, MAX_SUMMARY), notes: report.notes },
-            false,
-          )
-        : settled
-    })
-    if (!after.ok) {
-      /* The requests were made; only the bookkeeping failed. Say exactly that,
-         because the dangerous reading of an error here is "it did not send". */
-      return bad(`The review was sent, but the draft could not be updated afterwards: ${after.error} ${report.notes.join(' ')}`, 500)
-    }
-    return ok({ draft: after.value, report })
-  } finally {
-    sending.delete(lock)
-  }
+    return deliver(deps, projectPath, target, draft, { ids, verdict: draft.verdict, summary: draft.summary, by: { kind: 'person' } })
+  })
 }
 
 /* ------------------------------------------------------------------ *
@@ -529,7 +578,7 @@ const META_SCHEMA = {
 } as const
 
 /** The change an agent means: a tracker URL, or the short spelling of one that already has a draft here. */
-function changeFor(projectPath: string | null, given: unknown): Target {
+export function changeFor(projectPath: string | null, given: unknown): Target {
   if (typeof given !== 'string' || !given || given.length > 600) throw new Error(`Say which change, as its URL on the tracker. ${NOT_A_CHANGE}`)
   const direct = locate(given)
   if (direct) return direct
@@ -760,6 +809,11 @@ export async function answer(
   }
 
   if (!path.startsWith('/api/')) return null
+
+  /* Factory's send is answered by its own middleware (factory/door.ts), which reads the key from a
+     header this function is never given. Here it is not a route at all: not for the page's ticket,
+     not for anything else. */
+  if (path === '/api/factory' || path.startsWith('/api/factory/')) return bad('not here', 404)
 
   /* ---- reads: ungated. They show nothing the person's own `gh` would not. ---- */
 

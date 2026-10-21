@@ -474,7 +474,8 @@ describe('the facts are read fresh', () => {
   test('GitHub: the head and the commits, from the tracker', async () => {
     const runner = fake(githubReads)
     const got = await gather(runner.run, gh, draftOf(gh, [comment({ id: 'a' })]))
-    expect(got).toEqual({ ok: true, value: facts })
+    /* With the state, which the Factory send refuses a closed change on. */
+    expect(got).toEqual({ ok: true, value: { ...facts, state: 'open' } })
     expect(posts(runner.calls)).toEqual([])
   })
 

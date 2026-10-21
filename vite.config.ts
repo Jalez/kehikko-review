@@ -6,6 +6,7 @@ import { doors, serves } from 'kehikot-module-protocol/serve'
 import { defineConfig } from 'vite'
 
 import { BUILD, MANIFEST, TICKET, answer } from './doors.ts'
+import { factoryDoor } from './factory/door.ts'
 import { ID, PREFERRED_PORT } from './manifest.ts'
 
 /**
@@ -33,6 +34,10 @@ export default defineConfig({
   base: './',
   plugins: [
     serves({ id: ID, prefer: PREFERRED_PORT }),
+    /* Before `doors()`: Factory's send needs its key header, which `answer` is not given. It
+       makes the key on the first start. Without the header the request goes on to `doors()`,
+       which answers it 404. See factory/door.ts. */
+    factoryDoor(),
     doors({ manifest: MANIFEST, answer, build: BUILD, page: { title: 'Review', ticket: TICKET } }),
     react(),
     tailwindcss(),
