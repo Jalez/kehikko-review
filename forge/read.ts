@@ -1,3 +1,5 @@
+import { LIMITS, type TrackerReviewer } from 'kehikot-module-protocol'
+
 import type { Target } from './locate.ts'
 import type { Ran, Run, Runner } from './run.ts'
 
@@ -75,7 +77,31 @@ export interface Described {
   draft: boolean
   author: string
   url: string
+  /** The change's description as its author wrote it (markdown), bounded. Where before/after pictures usually are. */
+  description: string
+  /** Who has been asked to review it and has not answered since: GitHub's `requested_reviewers`, GitLab's `reviewers`. */
+  requested: { login: string; name?: string }[]
 }
+
+/** A login, and the name beside it when the forge said one. */
+export type Person = { login: string; name?: string }
+
+/** Who reviews a change and who approved it, read from the forge. Reviewers in the protocol's own shape (2.7.0). */
+export interface People {
+  reviewers: TrackerReviewer[]
+  /** Who approved; on GitLab also how many approvals are required and how many are still needed. */
+  approvals: { by: string[]; required?: number; left?: number }
+}
+
+/** One comment in the change's conversation. */
+export interface Note {
+  author: string
+  body: string
+}
+
+export const MAX_DESCRIPTION = 60_000
+export const MAX_NOTES = 100
+export const MAX_NOTE = 20_000
 
 export interface Commit {
   sha: string
@@ -150,6 +176,20 @@ export function commitsCommand(target: Target): Run {
   return target.forge === 'github'
     ? ghApi(`repos/${target.repo}/pulls/${target.number}/commits?per_page=${MAX_COMMITS}`)
     : glabApi(target, `${project(target)}/merge_requests/${target.number}/commits?per_page=${MAX_COMMITS}`)
+}
+
+/** GitHub: the pull request's reviews (decisions). GitLab: its approvals; its reviewers come with the merge request itself. */
+export function reviewsCommand(target: Target): Run {
+  return target.forge === 'github'
+    ? ghApi(`repos/${target.repo}/pulls/${target.number}/reviews?per_page=100`)
+    : glabApi(target, `${project(target)}/merge_requests/${target.number}/approvals`)
+}
+
+/** The change's conversation, oldest first: where before/after pictures are posted when they are not in the description. */
+export function notesCommand(target: Target): Run {
+  return target.forge === 'github'
+    ? ghApi(`repos/${target.repo}/issues/${target.number}/comments?per_page=${MAX_NOTES}`)
+    : glabApi(target, `${project(target)}/merge_requests/${target.number}/notes?per_page=${MAX_NOTES}&sort=asc`)
 }
 
 /**
@@ -230,6 +270,8 @@ export function readDescribed(target: Target, answer: string): Read<Described> {
         draft: body.draft === true,
         author: text(record(body.user)?.login, MAX_PERSON),
         url: text(body.html_url, 500),
+        description: text(body.body, MAX_DESCRIPTION),
+        requested: persons(body.requested_reviewers, 'login'),
       },
     }
   }
@@ -254,8 +296,95 @@ export function readDescribed(target: Target, answer: string): Read<Described> {
       draft: body.draft === true || body.work_in_progress === true,
       author: text(record(body.author)?.username, MAX_PERSON),
       url: text(body.web_url, 500),
+      description: text(body.description, MAX_DESCRIPTION),
+      requested: persons(body.reviewers, 'username'),
     },
   }
+}
+
+/** A forge's list of users as `{ login, name? }`, skipping anything that is not one. */
+function persons(value: unknown, key: 'login' | 'username'): Person[] {
+  if (!Array.isArray(value)) return []
+  const out: Person[] = []
+  for (const raw of value.slice(0, LIMITS.REVIEWERS)) {
+    const one = record(raw)
+    const login = text(one?.[key], MAX_PERSON)
+    if (!login) continue
+    const name = text(one?.name, MAX_PERSON)
+    out.push({ login, ...(name ? { name } : {}) })
+  }
+  return out
+}
+
+/**
+ * Who reviews the change, from the change and the forge's answer to `reviewsCommand`.
+ *
+ * GitHub: everyone asked and not yet answered is `requested` — a re-request after a review puts a
+ * person back there, which is the forge saying "look again". Everyone else who reviewed has their
+ * LATEST decision: an approval or a request for changes stands until replaced or dismissed, and a
+ * comment after an approval does not undo it. A pending review is the reviewer's own unsent draft
+ * and is not counted. The author commenting on their own change is not a reviewer.
+ *
+ * GitLab: the reviewers named on the merge request, `approved` when they approved and `requested`
+ * otherwise (its REST answer does not say "changes requested"), plus anyone who approved without
+ * being named.
+ */
+export function readPeople(target: Target, described: Described, answer: string): Read<People> {
+  const body = parse(answer)
+  const cap = LIMITS.REVIEWERS
+  if (target.forge === 'github') {
+    if (!Array.isArray(body)) return { ok: false, error: NOT_JSON }
+    const reviewers: TrackerReviewer[] = described.requested.map((p) => ({ ...p, state: 'requested' as const }))
+    const decided = new Map<string, TrackerReviewer['state']>()
+    const order: string[] = []
+    for (const raw of body.slice(0, 300)) {
+      const one = record(raw)
+      const login = text(record(one?.user)?.login, MAX_PERSON)
+      if (!login || login === described.author || one?.state === 'PENDING') continue
+      if (!decided.has(login)) order.push(login)
+      const was = decided.get(login)
+      if (one?.state === 'APPROVED') decided.set(login, 'approved')
+      else if (one?.state === 'CHANGES_REQUESTED') decided.set(login, 'changes')
+      else if (one?.state === 'DISMISSED') decided.set(login, 'commented')
+      else if (one?.state === 'COMMENTED' && was === undefined) decided.set(login, 'commented')
+    }
+    for (const login of order) {
+      if (reviewers.some((r) => r.login === login)) continue
+      reviewers.push({ login, state: decided.get(login) ?? 'commented' })
+    }
+    const by = order.filter((login) => decided.get(login) === 'approved' && !described.requested.some((r) => r.login === login))
+    return { ok: true, value: { reviewers: reviewers.slice(0, cap), approvals: { by } } }
+  }
+  const one = record(body)
+  if (!one) return { ok: false, error: NOT_JSON }
+  const approvers = persons((Array.isArray(one.approved_by) ? one.approved_by : []).map((a) => record(a)?.user), 'username')
+  const approved = new Set(approvers.map((a) => a.login))
+  const reviewers: TrackerReviewer[] = described.requested.map((p) => ({ ...p, state: approved.has(p.login) ? 'approved' : 'requested' }))
+  for (const a of approvers) if (!reviewers.some((r) => r.login === a.login)) reviewers.push({ ...a, state: 'approved' })
+  const count = (value: unknown) => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined)
+  const required = count(one.approvals_required)
+  const left = count(one.approvals_left)
+  return {
+    ok: true,
+    value: {
+      reviewers: reviewers.slice(0, cap),
+      approvals: { by: approvers.map((a) => a.login), ...(required !== undefined ? { required } : {}), ...(left !== undefined ? { left } : {}) },
+    },
+  }
+}
+
+/** The conversation as `{ author, body }`, oldest first. GitLab's system notes ("added 1 commit") are the forge talking, not people, and are left out. */
+export function readNotes(target: Target, answer: string): Read<Note[]> {
+  const body = parse(answer)
+  if (!Array.isArray(body)) return { ok: false, error: NOT_JSON }
+  const out: Note[] = []
+  for (const raw of body.slice(0, MAX_NOTES)) {
+    const one = record(raw)
+    if (!one || typeof one.body !== 'string' || one.system === true) continue
+    const author = target.forge === 'github' ? text(record(one.user)?.login, MAX_PERSON) : text(record(one.author)?.username, MAX_PERSON)
+    out.push({ author, body: text(one.body, MAX_NOTE) })
+  }
+  return { ok: true, value: out }
 }
 
 const firstLine = (message: unknown): string => text(typeof message === 'string' ? message.split('\n', 1)[0] : '', MAX_TITLE)
@@ -365,6 +494,16 @@ export async function describe(run: Runner, target: Target): Promise<Read<Descri
 export async function commits(run: Runner, target: Target): Promise<Read<Commits>> {
   const ran = await run({ ...commitsCommand(target), maxBytes: JSON_BYTES })
   return ran.ok ? readCommits(target, ran.text) : failed(ran)
+}
+
+export async function people(run: Runner, target: Target, described: Described): Promise<Read<People>> {
+  const ran = await run({ ...reviewsCommand(target), maxBytes: JSON_BYTES })
+  return ran.ok ? readPeople(target, described, ran.text) : failed(ran)
+}
+
+export async function notes(run: Runner, target: Target): Promise<Read<Note[]>> {
+  const ran = await run({ ...notesCommand(target), maxBytes: JSON_BYTES })
+  return ran.ok ? readNotes(target, ran.text) : failed(ran)
 }
 
 /**

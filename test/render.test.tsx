@@ -97,6 +97,8 @@ const change: ChangeRead = {
   draft: false,
   author: 'Jalez',
   url: GH_URL,
+  description: '',
+  requested: [],
   commits: [
     { sha: FIRST, title: 'first: lay the file down', author: 'Jalez', at: AT, parents: [MERGE_BASE] },
     { sha: HEAD, title: 'second: change it', author: 'Jalez', at: AT, parents: [FIRST] },
