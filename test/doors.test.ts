@@ -297,15 +297,17 @@ describe('sending, against a tracker that is a function', () => {
 
   test('if the draft changed after the confirmation was shown, nothing is sent', async () => {
     const { post, tool, runner, confirmed, dir } = await drafted((run) => (isPost(run) ? reviewOk : undefined))
-    /* An agent proposes a different verdict between the two presses. */
-    await tool('set_verdict', { projectPath: dir, change: GH_URL, verdict: 'request-changes' })
+    /* An agent may not replace the verdict the person chose at all now… */
+    expect((await tool('set_verdict', { projectPath: dir, change: GH_URL, verdict: 'request-changes' })).isError).toBe(true)
+    /* …so the verdict changes from another pane between the two presses. */
+    await post('/api/verdict', { projectPath: dir, url: GH_URL, verdict: 'request-changes' })
     const reply = await post('/api/send', confirmed)
     expect(reply?.status).toBe(409)
     expect(errorOf(reply)).toContain('draft changed after you looked')
     expect(runner.calls.filter(isPost)).toEqual([])
 
     /* Likewise a comment it never showed, and a comment that does not exist. */
-    await tool('set_verdict', { projectPath: dir, change: GH_URL, verdict: 'approve' })
+    await post('/api/verdict', { projectPath: dir, url: GH_URL, verdict: 'approve' })
     expect((await post('/api/send', { ...confirmed, ids: ['c-1', 'c-2', 'c-99'] }))?.status).toBe(409)
     expect(runner.calls.filter(isPost)).toEqual([])
   })
@@ -359,7 +361,18 @@ describe('the MCP door', () => {
     const { rpc } = world()
     expect((await answer('GET', '/mcp', none, null, null))?.status).toBe(405)
     const tools = (await rpc('tools/list')).result?.tools ?? []
-    expect(tools.map((one) => one.name)).toEqual(['list_reviews', 'read_review', 'read_change', 'read_diff', 'add_comment', 'reword_comment', 'drop_comment', 'set_verdict'])
+    expect(tools.map((one) => one.name)).toEqual([
+      'list_reviews',
+      'read_review',
+      'read_change',
+      'read_diff',
+      'add_comment',
+      'reword_comment',
+      'drop_comment',
+      'set_verdict',
+      'propose_review',
+      'drop_run_comments',
+    ])
     /* The decision this module is built around: an agent drafts, a person sends. */
     for (const one of tools) expect(one.name).not.toMatch(/send|submit|post|publish|approve/i)
     /* And every tool that writes says so in its own description. */
@@ -384,6 +397,8 @@ describe('the MCP door', () => {
       reword_comment: 'destroys',
       drop_comment: 'destroys',
       set_verdict: 'destroys',
+      propose_review: 'destroys',
+      drop_run_comments: 'destroys',
     })
     for (const one of tools) {
       expect(Object.keys(one.inputSchema.properties)).toContain('project')

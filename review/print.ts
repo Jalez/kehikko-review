@@ -1,6 +1,7 @@
 import type { FileDiff } from '../src/diff/parse.ts'
 
-import { short, spell, type Comment, type Draft } from './shape.ts'
+import { proposalBody } from './draft.ts'
+import { short, spell, type Comment, type Draft, type Meta } from './shape.ts'
 
 /**
  * A diff and a draft, as text an agent reads.
@@ -93,9 +94,21 @@ export function printComment(comment: Comment): string {
   const state = comment.sent ? (comment.sent.folded ? 'SENT (in the summary, not on its line)' : 'SENT') : 'draft'
   return [
     `[${comment.id}] ${comment.path}:${lines} (${comment.side} side, ${frame}) — by ${comment.by === 'agent' ? 'an agent' : 'the person'}, ${state}`,
+    ...(comment.meta ? printMeta(comment.meta) : []),
     ...(comment.quote ? comment.quote.split('\n').slice(0, 6).map((l) => `    | ${l.slice(0, 160)}`) : []),
     ...comment.body.split('\n').map((l) => `  ${l}`),
   ].join('\n')
+}
+
+/** A run's point, as the lines under its heading: the ruling, the evidence, the challenge. */
+export function printMeta(meta: Meta): string[] {
+  return [
+    `  run ${meta.run}: ${meta.severity}, ${meta.ruling} — ${meta.reason}`,
+    ...meta.evidence.map((e) => `  evidence (${e.kind}): ${e.ref}${e.quote ? ` — “${e.quote.slice(0, 160)}”` : ''}`),
+    ...(meta.challenge ? [`  challenged: ${meta.challenge}`] : []),
+    ...(meta.checklist?.length ? [`  checklist: ${meta.checklist.join(', ')}`] : []),
+    ...(meta.head ? [`  read at head ${short(meta.head)}`] : []),
+  ]
 }
 
 export function printDraft(draft: Draft): string {
@@ -109,6 +122,14 @@ export function printDraft(draft: Draft): string {
     `${waiting.length} draft comment${waiting.length === 1 ? '' : 's'} not yet sent${waiting.length ? ':' : '.'}`,
     ...waiting.map(printComment),
   ]
+  const p = draft.proposal
+  if (p) {
+    out.push(
+      '',
+      `Proposed by run ${p.run} at head ${short(p.head)} (beside the person’s summary and verdict, not over them): verdict “${p.verdict}”, ${p.door}${p.uiux ? ', touches what people see' : ''}${p.sent ? `, SENT at ${p.sent.at}` : ''}`,
+      ...proposalBody(p).split('\n').map((l) => `  ${l}`),
+    )
+  }
   if (gone.length) out.push('', `${gone.length} already sent (on the tracker; not editable from here):`, ...gone.map(printComment))
   if (draft.sent.length) {
     out.push('', 'Sends so far:')

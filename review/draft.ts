@@ -196,7 +196,7 @@ const text = (value: unknown, max: number, name: string, required: boolean): { o
   return { ok: true, value: trimmed || undefined }
 }
 
-const RUN_SAYS = 'A run is named by an id of letters, digits and . _ : - (at most 80), the one Factory gave it.'
+export const RUN_SAYS = 'A run is named by an id of letters, digits and . _ : - (at most 80), the one Factory gave it.'
 
 export const runOf = (value: unknown): string | null => (typeof value === 'string' && RUN.test(value) ? value : null)
 
