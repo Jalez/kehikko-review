@@ -6,7 +6,7 @@ import { commits as readCommits, describe, diff, held, isSha, login, notes, peop
 import { run as realRun, type Runner } from './forge/run.ts'
 import { ID, MANIFEST, VERSION } from './manifest.ts'
 import { anchor } from './review/anchor.ts'
-import { addComment, bodyOf, dropComment, dropRunComments, logSend, RUN_SAYS, metaOf, ofRun, proposalOf, proposeReview, rewordComment, runOf, setVerdict, stamp } from './review/draft.ts'
+import { addComment, bodyOf, dropComment, dropRunComments, logSend, RUN_SAYS, metaOf, ofRun, proposalOf, proposeReview, rewordComment, runOf, setVerdict, stamp, takeProposal } from './review/draft.ts'
 import { keyOf } from './review/key.ts'
 import { shotsOf } from './review/shots.ts'
 import { DEFAULT_DIFF_LINES, MAX_DIFF_LINES, printComment, printDiff, printDraft, printFiles } from './review/print.ts'
@@ -904,6 +904,13 @@ export async function answer(
   if (path === '/api/comment/drop') return wrote(changeDraft(projectPath, target, (draft) => dropComment(draft, body.id)))
 
   if (path === '/api/verdict') return wrote(changeDraft(projectPath, target, (draft) => setVerdict(draft, body.verdict, body.summary)))
+
+  /* The person takes a run's proposed summary or verdict into their own: their press, their words. */
+  if (path === '/api/proposal/take') {
+    const which = body.which === 'summary' || body.which === 'verdict' ? body.which : null
+    if (!which) return bad('Take the summary or the verdict.')
+    return wrote(changeDraft(projectPath, target, (draft) => takeProposal(draft, which, body.run, deps.now())))
+  }
 
   if (path === '/api/send') return send(deps, projectPath, target, body)
 

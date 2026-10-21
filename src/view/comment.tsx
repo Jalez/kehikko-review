@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-import { MAX_BODY, short, type Comment } from '../../review/shape.ts'
+import { MAX_BODY, short, type Comment, type EvidenceKind, type Meta, type Severity } from '../../review/shape.ts'
 
 import { useHolding } from './holding.ts'
 
@@ -233,6 +233,7 @@ export function CommentCard({
       </div>
       {stale ? <p className="text-del-mark">{stale}</p> : null}
       <p className="whitespace-pre-wrap text-[0.75rem] leading-snug">{comment.body}</p>
+      {comment.meta && where !== undefined ? <Point meta={comment.meta} /> : null}
       {error ? (
         <p role="alert" className="rounded-md border border-del-mark/50 bg-del px-2 py-1">
           {error}
@@ -269,4 +270,59 @@ export function CommentCard({
 /** A comment's frame, as a few words: which diff its line numbers are from. */
 export function frameOf(comment: Comment): string {
   return comment.view === 'all' ? `all changes at ${short(comment.commit)}` : `commit ${short(comment.commit)}`
+}
+
+const SEVERITY_WORD: Record<Severity, string> = { blocking: 'Blocking', risk: 'Risk', nice: 'Nice to have' }
+const EVIDENCE_WORD: Record<EvidenceKind, string> = { line: 'Line', test: 'Test', doc: 'Document', practice: 'Practice' }
+
+/** An https address, or null: only such a source is drawn as a link. Anything else is text. */
+export function httpsOnly(ref: string): string | null {
+  try {
+    const url = new URL(ref)
+    return url.protocol === 'https:' && !url.username && !url.password ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * What a review run says about one of its points, under the words that would be posted: how bad,
+ * whether the judge ruled it required, why, on which evidence, and the case made against it. In
+ * words, never colour alone. Shown in the review panel's copy of the card, where there is room.
+ */
+export function Point({ meta }: { meta: Meta }) {
+  return (
+    <div data-testid="point" className="flex min-w-0 flex-col gap-0.5 rounded-md border bg-background px-2 py-1 text-[0.7rem] leading-4">
+      <p className="flex min-w-0 flex-wrap items-center gap-1">
+        <Badge variant="outline" className="px-1.5 text-[0.65rem]">
+          {SEVERITY_WORD[meta.severity]}
+        </Badge>
+        <Badge variant={meta.ruling === 'required' ? 'default' : 'secondary'} className="px-1.5 text-[0.65rem]">
+          {meta.ruling === 'required' ? 'Required' : 'Optional'}
+        </Badge>
+        <span className="min-w-0 [overflow-wrap:anywhere]">{meta.reason}</span>
+      </p>
+      <ul className="flex min-w-0 flex-col gap-0.5 text-muted-foreground">
+        {meta.evidence.map((one, at) => {
+          const link = httpsOnly(one.ref)
+          return (
+            <li key={at} className="min-w-0 [overflow-wrap:anywhere]">
+              {EVIDENCE_WORD[one.kind]}:{' '}
+              {link ? (
+                <a className="underline underline-offset-2" href={link} target="_blank" rel="noopener noreferrer">
+                  {one.ref}
+                </a>
+              ) : (
+                <span className="font-mono">{one.ref}</span>
+              )}
+              {one.quote ? <span> — “{one.quote}”</span> : null}
+            </li>
+          )
+        })}
+      </ul>
+      {meta.challenge ? <p className="[overflow-wrap:anywhere]">Challenged: {meta.challenge}</p> : null}
+      {meta.checklist?.length ? <p className="text-muted-foreground">Checklist: {meta.checklist.join(', ')}</p> : null}
+      <p className="text-muted-foreground">From review run {meta.run}.</p>
+    </div>
+  )
 }

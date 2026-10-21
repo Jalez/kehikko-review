@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { opening } from '@/diff/budget'
 import { HeaderFallback } from '@/header-fallback'
-import { ALL, headerOf } from '@/header'
+import { ALL, SHOTS, headerOf } from '@/header'
 import type { Host } from '@/wire/use-kehikot'
 import { parseDiff, totals, type FileDiff } from '@/diff/parse'
 import type { Api, ChangeRead } from '@/wire/api'
@@ -17,6 +17,7 @@ import { CommentCard, Composer } from './comment.tsx'
 import { FileSection, type Pick } from './file-diff.tsx'
 import { HoldingContext, drafts, type Holding } from './holding.ts'
 import { ReviewPanel } from './review-panel.tsx'
+import { ShotsView } from './shots.tsx'
 import { heldAtProject } from '../wire/held-at-project.ts'
 
 /**
@@ -41,8 +42,8 @@ import { heldAtProject } from '../wire/held-at-project.ts'
 
 type Loaded<T> = { at: 'loading' } | { at: 'error'; error: string } | { at: 'ok'; value: T }
 
-/** Which diff is on screen. `all` has no sha of its own: it is always at the change's current head. */
-type Showing = { view: 'all' } | { view: 'commit'; sha: string }
+/** Which diff is on screen — or none: `shots` is the Before / after view. `all` has no sha of its own: it is always at the change's current head. */
+type Showing = { view: 'all' } | { view: 'commit'; sha: string } | { view: 'shots' }
 
 interface Patch {
   /** Which diff this is: the view and the commit it was read for. */
@@ -152,23 +153,25 @@ export function ChangeReview({
   useEffect(() => {
     if (showing.view === 'commit' && change.at === 'ok' && !change.value.commits.some((c) => c.sha === showing.sha)) setShowing({ view: 'all' })
   }, [change, showing])
-  const sha = showing.view === 'all' ? head : showing.sha
+  const sha = showing.view === 'all' ? head : showing.view === 'commit' ? showing.sha : null
+  /* The frame comments are written in: a diff. The Before / after view is none. */
+  const frame: View | null = showing.view === 'shots' ? null : showing.view
 
   /* ---- the diff of that view ---- */
   const [patch, setPatch] = useState<Loaded<Patch>>({ at: 'loading' })
   const [patchAgain, setPatchAgain] = useState(0)
   useEffect(() => {
-    if (!sha) return
+    if (!sha || !frame) return
     let live = true
     setPatch({ at: 'loading' })
     api
-      .diff(url, showing.view, sha)
+      .diff(url, frame, sha)
       .then((got) => live && setPatch({ at: 'ok', value: { of: `${showing.view}:${sha}`, files: parseDiff(got.text), truncated: got.truncated, empty: !got.text.trim() } }))
       .catch((e: unknown) => live && setPatch({ at: 'error', error: say(e) }))
     return () => {
       live = false
     }
-  }, [api, url, showing.view, sha, patchAgain])
+  }, [api, url, showing.view, frame, sha, patchAgain])
 
   /* ---- the draft ---- */
   const [draft, setDraft] = useState<Loaded<Draft>>({ at: 'loading' })
@@ -359,7 +362,7 @@ export function ChangeReview({
             change: refName,
             commits: commits.map((c) => ({ sha: c.sha, title: c.title, waiting: waitingIn('commit', c.sha) })),
             waitingAll: waitingIn('all', head),
-            showing: showing.view === 'all' ? ALL : showing.sha,
+            showing: showing.view === 'all' ? ALL : showing.view === 'shots' ? SHOTS : showing.sha,
             more: change.at === 'ok' && Boolean(change.value.more),
           })
         : [],
@@ -382,6 +385,7 @@ export function ChangeReview({
     }
     if (item === 'showing') {
       if (value === ALL) setShowing({ view: 'all' })
+      else if (value === SHOTS) setShowing({ view: 'shots' })
       else if (typeof value === 'string' && commits.some((c) => c.sha === value)) setShowing({ view: 'commit', sha: value })
       else return 'That commit is no longer one of this change’s.'
       return true
@@ -397,7 +401,7 @@ export function ChangeReview({
     [presses],
   )
 
-  const canWrite = Boolean(projectPath) && draft.at === 'ok' && sha !== null
+  const canWrite = Boolean(projectPath) && draft.at === 'ok' && sha !== null && frame !== null
 
   const reword = (id: string, body: string) => write(() => api.reword(projectPath!, url, id, body))
   const drop = (id: string) => write(() => api.drop(projectPath!, url, id))
@@ -474,9 +478,11 @@ export function ChangeReview({
           ? <Failure error={draft.error} onAgain={reread} />
           : null}
 
-      {change.at === 'ok' ? (
+      {change.at === 'ok' && showing.view === 'shots' ? <ShotsView api={api} url={url} /> : null}
+
+      {change.at === 'ok' && frame !== null ? (
         <div className="flex min-w-0 flex-col gap-1" data-view={showing.view}>
-          {patch.at === 'loading' ? note(showing.view === 'all' ? 'Reading the diff of the whole change…' : `Reading the diff of commit ${short(showing.sha)}…`) : null}
+          {patch.at === 'loading' ? note(showing.view === 'all' ? 'Reading the diff of the whole change…' : `Reading the diff of commit ${short(sha ?? '')}…`) : null}
           {patch.at === 'error' ? <Failure error={patch.error} onAgain={() => setPatchAgain((n) => n + 1)} /> : null}
           {patch.at === 'ok' && files && plan ? (
             <>
@@ -523,7 +529,8 @@ export function ChangeReview({
                           onSave={(body) =>
                             write(() =>
                               api.addComment(projectPath!, url, {
-                                view: showing.view,
+                                /* A composer is only open on a diff, so there is a frame. */
+                                view: frame as View,
                                 /* The frame, sent explicitly: the head this diff
                                    was read at, or the commit. The server refuses
                                    if the change has moved past it. */
@@ -569,6 +576,7 @@ export function ChangeReview({
               .then(setLogin)
               .catch(() => setLogin(null))
           }}
+          onTake={(which, run) => write(() => api.takeProposal(projectPath, url, which, run))}
           onSend={async (confirmed) => {
             writes.current += 1
             try {

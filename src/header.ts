@@ -18,6 +18,8 @@ import { short } from '../review/shape.ts'
  */
 
 export const ALL = 'all'
+/** The Before / after view: the change's pictures, not a diff. */
+export const SHOTS = 'shots'
 
 /** A label no longer than a label may be, cut with an ellipsis. Never empty. */
 export function cut(text: string, max: number = LIMITS.HEADER_LABEL): string {
@@ -41,7 +43,7 @@ export interface HeaderState {
   commits: readonly HeaderCommit[]
   /** Draft comments waiting in the whole-change view. */
   waitingAll: number
-  /** Which view is on: `all` or a commit's sha. */
+  /** Which view is on: `all`, a commit's sha, or `shots`. */
   showing: string
   /** The forge listed more commits than are kept. */
   more: boolean
@@ -65,8 +67,8 @@ export function headerOf(state: HeaderState): HeaderItemInput[] {
     }
   }
 
-  /* As many as a switch may hold: the newest commits, and the picked one wherever it is. */
-  const room = LIMITS.HEADER_OPTIONS - 1
+  /* As many as a switch may hold beside "All changes" and "Before / after": the newest commits, and the picked one wherever it is. */
+  const room = LIMITS.HEADER_OPTIONS - 2
   let commits = state.commits.slice(-room)
   const picked = state.commits.find((one) => one.sha === state.showing)
   if (picked && !commits.includes(picked)) commits = [picked, ...commits.slice(1)]
@@ -76,10 +78,11 @@ export function headerOf(state: HeaderState): HeaderItemInput[] {
     label: state.more || state.commits.length > room ? 'Showing · not every commit is listed' : 'Showing',
     icon: 'git-commit-horizontal',
     agents: true,
-    value: state.showing === ALL || commits.some((one) => one.sha === state.showing) ? state.showing : ALL,
+    value: state.showing === ALL || state.showing === SHOTS || commits.some((one) => one.sha === state.showing) ? state.showing : ALL,
     options: [
       { id: ALL, label: cut(`All changes${counted(state.waitingAll)}`) },
       ...commits.map((one) => ({ id: one.sha, label: cut(`${short(one.sha)} ${one.title}${counted(one.waiting)}`) })),
+      { id: SHOTS, label: 'Before / after' },
     ],
   })
   return items

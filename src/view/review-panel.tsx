@@ -7,7 +7,8 @@ import { cn } from '@/lib/utils'
 import type { Confirmed } from '@/wire/api'
 
 import type { Report } from '../../review/send.ts'
-import { MAX_SUMMARY, short, type Comment, type Draft, type Verdict } from '../../review/shape.ts'
+import { proposalBody } from '../../review/draft.ts'
+import { MAX_SUMMARY, short, type Comment, type Draft, type Proposal, type Verdict } from '../../review/shape.ts'
 
 import { CommentCard, SMALL, frameOf, place } from './comment.tsx'
 
@@ -51,6 +52,7 @@ export function ReviewPanel({
   onVerdict,
   onConfirming,
   onSend,
+  onTake,
 }: {
   draft: Draft
   /** The change's head now. A whole-change comment written at another head is marked. */
@@ -69,6 +71,8 @@ export function ReviewPanel({
   /** The confirmation has opened: the moment to find out whose login this is. */
   onConfirming(): void
   onSend(confirmed: Confirmed): Promise<Report>
+  /** The person takes a review run's proposed summary or verdict. Absent, the proposal is shown and cannot be taken. */
+  onTake?(which: 'summary' | 'verdict', run: string): Promise<void>
 }) {
   /*
    * The summary is saved when the box is left, so words typed and not yet left are only here — and
@@ -180,6 +184,24 @@ export function ReviewPanel({
           No draft comments yet. Press a line number in the diff to comment on that line; shift-press a second one to cover a range.
         </p>
       )}
+
+      {draft.proposal ? (
+        <ProposalBox
+          proposal={draft.proposal}
+          yours={summary}
+          disabled={sending || confirming !== null || !onTake}
+          onTake={async (which) => {
+            await onTake!(which, draft.proposal!.run)
+            if (which === 'summary') {
+              /* Taken on purpose, so whatever was being typed is replaced, held copy and all. */
+              dirty.current = false
+              holding.keep('summary', null)
+              setSummaryFrom(null)
+              setSummary(proposalBody(draft.proposal!))
+            }
+          }}
+        />
+      ) : null}
 
       <label htmlFor="summary" className="pt-1 text-muted-foreground">
         Summary — the review’s overall comment
@@ -315,5 +337,81 @@ export function ReviewPanel({
         </details>
       ) : null}
     </section>
+  )
+}
+
+/**
+ * A review run's proposed summary and verdict, BESIDE the person's: never written into theirs
+ * except by their own press. "Use this summary" asks first when their box has words in it.
+ */
+function ProposalBox({
+  proposal,
+  yours,
+  disabled,
+  onTake,
+}: {
+  proposal: Proposal
+  yours: string
+  disabled: boolean
+  onTake(which: 'summary' | 'verdict'): Promise<void>
+}) {
+  const [armed, setArmed] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const body = proposalBody(proposal)
+  const asks = yours.trim() !== '' && yours !== body
+  const take = (which: 'summary' | 'verdict') => {
+    setError(null)
+    setArmed(false)
+    onTake(which).catch((e: unknown) => setError(say(e)))
+  }
+  return (
+    <div data-testid="proposal" className="flex min-w-0 flex-col gap-1 rounded-md border border-agent/50 bg-background p-2">
+      <p className="font-semibold">
+        Proposed by review run {proposal.run}
+        <span className="font-normal text-muted-foreground"> — at {short(proposal.head)}, beside your summary and verdict</span>
+      </p>
+      <p>
+        Verdict: <strong>{VERDICT_WORD[proposal.verdict]}</strong>
+      </p>
+      <p className="text-muted-foreground">
+        {proposal.door === 'one-way' ? 'One-way: hard or impossible to undo, so it waits for you.' : 'Two-way: cheap to undo.'}
+        {proposal.uiux ? ' It touches what people see, so it waits for you.' : ''}
+      </p>
+      <p className="min-w-0 whitespace-pre-wrap text-[0.75rem] leading-snug [overflow-wrap:anywhere]">{proposal.summary}</p>
+      {proposal.pathToSuccess.length ? (
+        <>
+          <p className="font-semibold">To get this approved:</p>
+          <ol className="list-decimal pl-4">
+            {proposal.pathToSuccess.map((step, at) => (
+              <li key={at} className="[overflow-wrap:anywhere]">
+                {step}
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : null}
+      {proposal.sent ? <p>Sent by Factory at {proposal.sent.at}, at {short(proposal.sent.head)}.</p> : null}
+      {error ? (
+        <p role="alert" className="rounded-md border border-del-mark/50 bg-del px-2 py-1">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={cn(SMALL, armed && 'text-destructive')}
+          disabled={disabled}
+          onBlur={() => setArmed(false)}
+          onClick={() => (asks && !armed ? setArmed(true) : take('summary'))}
+        >
+          {armed ? 'Replace your summary?' : 'Use this summary'}
+        </Button>
+        <Button type="button" variant="outline" size="sm" className={SMALL} disabled={disabled} onClick={() => take('verdict')}>
+          Use this verdict
+        </Button>
+      </div>
+    </div>
   )
 }
