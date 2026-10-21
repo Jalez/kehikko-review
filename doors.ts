@@ -2,12 +2,13 @@ import { KEHIKOT_DIR } from 'kehikot-module-protocol'
 import { DOOR_PROJECT_SAYS, establishBuild, mintTicket, refuseTicket, resolveDoorProject, type Reply } from 'kehikot-module-protocol/serve'
 
 import { locate, type Target } from './forge/locate.ts'
-import { commits as readCommits, describe, diff, held, isSha, login, people, type Commit, type Described, type People, type Range } from './forge/read.ts'
+import { commits as readCommits, describe, diff, held, isSha, login, notes, people, type Commit, type Described, type People, type Range } from './forge/read.ts'
 import { run as realRun, type Runner } from './forge/run.ts'
 import { ID, MANIFEST, VERSION } from './manifest.ts'
 import { anchor } from './review/anchor.ts'
 import { addComment, bodyOf, dropComment, dropRunComments, logSend, RUN_SAYS, metaOf, ofRun, proposalOf, proposeReview, rewordComment, runOf, setVerdict, stamp } from './review/draft.ts'
 import { keyOf } from './review/key.ts'
+import { shotsOf } from './review/shots.ts'
 import { DEFAULT_DIFF_LINES, MAX_DIFF_LINES, printComment, printDiff, printDraft, printFiles } from './review/print.ts'
 import { execute, gather, plan, type Facts, type Report } from './review/send.ts'
 import {
@@ -846,6 +847,18 @@ export async function answer(
     }
 
     if (path === '/api/login') return ok({ login: await login(deps.run, target) })
+
+    /* The Before / after view: images from the description and the conversation, judged by
+       `shotsOf` (https on the forge's own hosts only). Nothing is fetched but the text. */
+    if (path === '/api/shots') {
+      const [described, said] = await Promise.all([describe(deps.run, target), notes(deps.run, target)])
+      if (!described.ok) return bad(described.error, 502)
+      const sources = [
+        { where: 'the description', text: described.value.description },
+        ...(said.ok ? said.value.map((note) => ({ where: `a comment by ${note.author || 'somebody'}`, text: note.body })) : []),
+      ]
+      return ok({ shots: shotsOf(target, sources), ...(said.ok ? {} : { unread: `The comments could not be read, so only the description was looked in: ${said.error}` }) })
+    }
 
     return bad('not here', 404)
   }
