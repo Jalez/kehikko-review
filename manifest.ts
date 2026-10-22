@@ -108,6 +108,9 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   protocol: PROTOCOL,
   id: ID,
   name: 'Review',
+  /* The icon a host draws beside the name: a key of the protocol's module icons, never a path
+     or URL; the same key Kehikot's official list gives it. */
+  icon: 'lucide:message-square-code',
   version: VERSION,
   /* The format of what this module keeps under `.kehikot/`. Raise it only in
      the release that first writes data an older release cannot read. */
