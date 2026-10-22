@@ -24,6 +24,8 @@ import {
   MAX_QUOTE,
   MAX_SENT_LOG,
   MAX_SUMMARY,
+  MAX_PROOFS,
+  MAX_REPLIES,
   VERDICTS,
   changeOf,
   type By,
@@ -33,6 +35,8 @@ import {
   type Evidence,
   type Meta,
   type Proposal,
+  type Proof,
+  type ReplyDraft,
   type Sent,
   type SentRecord,
   type View,
@@ -57,6 +61,8 @@ export const emptyDraft = (change: ChangeRef): Draft => ({
   summary: '',
   verdict: null,
   sent: [],
+  evidence: [],
+  replies: [],
 })
 
 /* ------------------------------------------------------------------ *
@@ -123,7 +129,7 @@ function readProposal(value: unknown): { proposal?: Proposal } {
       ...got.proposal,
       head: one.head,
       at: str(one.at, 40),
-      ...(taken
+      ...(taken && (typeof taken.summary === 'string' || typeof taken.verdict === 'string')
         ? { taken: { ...(typeof taken.summary === 'string' ? { summary: str(taken.summary, 40) } : {}), ...(typeof taken.verdict === 'string' ? { verdict: str(taken.verdict, 40) } : {}) } }
         : {}),
       ...(sent && typeof sent.at === 'string' && isSha(sent.head) ? { sent: { at: str(sent.at, 40), head: sent.head } } : {}),
@@ -178,6 +184,9 @@ export function readDraft(value: unknown): Draft | null {
     ...(one.summaryBy === 'person' || one.summaryBy === 'agent' ? { summaryBy: one.summaryBy } : {}),
     ...(one.verdictBy === 'person' || one.verdictBy === 'agent' ? { verdictBy: one.verdictBy } : {}),
     ...readProposal(one.proposal),
+    /* A JSON draft is from before evidence and replies were kept. */
+    evidence: [],
+    replies: [],
   }
 }
 
@@ -313,17 +322,29 @@ export function takeProposal(draft: Draft, which: 'summary' | 'verdict', run: un
   return { ok: false, error: 'Take the summary or the verdict.' }
 }
 
-/** Whether a comment is one a run wrote and may replace: an agent's, unsent, with that run's meta. */
+/** Whether a comment is one a run wrote: an agent's, unsent, with that run's meta. What Factory's send posts. */
 export const ofRun = (comment: Comment, run: string): boolean => comment.by === 'agent' && !comment.sent && comment.meta?.run === run
 
+/** Whether a re-run may replace it: one of the run's own points that the person has not kept. */
+export const replaceable = (comment: Comment, run: string): boolean => ofRun(comment, run) && !comment.kept
+
 /**
- * A re-run's clean slate: that run's unsent agent comments go, and nothing else — not the person's
- * comments (whatever a file says about them), not a sent one, not another run's, not the summary.
+ * A re-run's clean slate: that run's unsent agent comments the person has not kept go, with the
+ * evidence an agent attached to them or collected for that run, and nothing else — not the
+ * person's comments (whatever a file says about them), not a kept one, not a sent one, not another
+ * run's, not the person's evidence, not the summary. The files of the evidence dropped are named in
+ * `gone`, for the store to delete once the review no longer names them.
  */
-export function dropRunComments(draft: Draft, run: unknown): Changed {
+export function dropRunComments(draft: Draft, run: unknown): Changed & { gone?: string[] } {
   const id = runOf(run)
   if (!id) return { ok: false, error: RUN_SAYS }
-  return { ok: true, draft: { ...draft, comments: draft.comments.filter((c) => !ofRun(c, id)) } }
+  const dropped = new Set(draft.comments.filter((c) => replaceable(c, id)).map((c) => c.id))
+  const goes = (proof: Proof) => proof.by === 'agent' && (proof.run === id || (proof.point !== undefined && dropped.has(proof.point)))
+  return {
+    ok: true,
+    draft: { ...draft, comments: draft.comments.filter((c) => !dropped.has(c.id)), evidence: draft.evidence.filter((p) => !goes(p)) },
+    gone: draft.evidence.filter(goes).map((p) => p.file),
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -400,21 +421,126 @@ const NO_SUCH = (id: unknown) => `There is no comment "${String(id).slice(0, 40)
 export const PERSONS_OWN =
   'That comment is the person’s own, so an agent may not reword or remove it. Say what you would change in a comment of your own.'
 
+/** What an agent is told about a point the person kept: keeping it made it their decision. */
+export const PERSONS_KEPT =
+  'The person kept that point, so it is theirs now and an agent may not reword or remove it. Say what you would change in a comment of your own.'
+
 export function rewordComment(draft: Draft, id: unknown, body: string, now: string, who: By = 'person'): Changed {
   const was = find(draft, id)
   if (!was) return { ok: false, error: NO_SUCH(id) }
   if (was.sent) return { ok: false, error: ALREADY_SENT }
   if (who === 'agent' && was.by === 'person') return { ok: false, error: PERSONS_OWN }
-  return { ok: true, draft: { ...draft, comments: draft.comments.map((c) => (c === was ? { ...c, body, editedAt: now } : c)) } }
+  if (who === 'agent' && was.kept) return { ok: false, error: PERSONS_KEPT }
+  /* The person editing an agent's words is the person deciding to keep the point, in their words. */
+  const kept = who === 'person' && was.by === 'agent' && !was.kept ? { kept: now } : {}
+  return { ok: true, draft: { ...draft, comments: draft.comments.map((c) => (c === was ? { ...c, body, editedAt: now, ...kept } : c)) } }
 }
 
-export function dropComment(draft: Draft, id: unknown, who: By = 'person'): Changed {
+export function dropComment(draft: Draft, id: unknown, who: By = 'person'): Changed & { gone?: string[] } {
   const was = find(draft, id)
   if (!was) return { ok: false, error: NO_SUCH(id) }
   if (was.sent) return { ok: false, error: ALREADY_SENT }
   if (who === 'agent' && was.by === 'person') return { ok: false, error: PERSONS_OWN }
-  return { ok: true, draft: { ...draft, comments: draft.comments.filter((c) => c !== was) } }
+  if (who === 'agent' && was.kept) return { ok: false, error: PERSONS_KEPT }
+  /* Evidence an agent attached to the point goes with it; the person's own evidence stays, unattached. */
+  const goes = (p: Proof) => p.point === was.id && p.by === 'agent'
+  return {
+    ok: true,
+    draft: {
+      ...draft,
+      comments: draft.comments.filter((c) => c !== was),
+      evidence: draft.evidence.filter((p) => !goes(p)).map((p) => (p.point === was.id ? withoutPoint(p) : p)),
+    },
+    gone: draft.evidence.filter(goes).map((p) => p.file),
+  }
 }
+
+const withoutPoint = (proof: Proof): Proof => {
+  const { point: _point, ...rest } = proof
+  return rest
+}
+
+/** The person keeps an agent's unsent point: their press. Only the person's send posts an agent point, and only a kept one. */
+export function keepComment(draft: Draft, id: unknown, now: string): Changed {
+  const was = find(draft, id)
+  if (!was) return { ok: false, error: NO_SUCH(id) }
+  if (was.sent) return { ok: false, error: ALREADY_SENT }
+  if (was.by === 'person') return { ok: false, error: 'That point is your own; there is nothing to keep.' }
+  if (was.kept) return { ok: true, draft }
+  return { ok: true, draft: { ...draft, comments: draft.comments.map((c) => (c === was ? { ...c, kept: now } : c)) } }
+}
+
+/** The person marks a sent point resolved, or opens it again (`resolved: false`). */
+export function resolveComment(draft: Draft, id: unknown, resolved: boolean, now: string): Changed {
+  const was = find(draft, id)
+  if (!was) return { ok: false, error: NO_SUCH(id) }
+  if (!was.sent) return { ok: false, error: 'Only a point that has been sent can be resolved: a draft is kept or dropped.' }
+  const next: Comment = resolved ? { ...was, resolved: was.resolved ?? now } : (({ resolved: _r, ...rest }) => rest)(was)
+  return { ok: true, draft: { ...draft, comments: draft.comments.map((c) => (c === was ? next : c)) } }
+}
+
+/** Whether the person's send may post this comment: unsent, and theirs or kept by them. */
+export const personMaySend = (comment: Comment): boolean => !comment.sent && (comment.by === 'person' || Boolean(comment.kept))
+
+/* ------------------------------------------------------------------ *
+ * Evidence
+ * ------------------------------------------------------------------ */
+
+/** Add a piece of evidence the store has already written to disk. A point it names must be in the review. */
+export function addProof(draft: Draft, proof: Proof): Changed {
+  if (draft.evidence.length >= MAX_PROOFS) return { ok: false, error: `This review already holds ${MAX_PROOFS} pieces of evidence. Remove some first.` }
+  if (proof.point !== undefined && !draft.comments.some((c) => c.id === proof.point)) {
+    return { ok: false, error: `There is no point "${proof.point.slice(0, 40)}" in this review to attach evidence to. read_review lists the points with their ids.` }
+  }
+  return { ok: true, draft: { ...draft, evidence: [...draft.evidence, proof] } }
+}
+
+/** Remove a piece of evidence. An agent may remove only an agent's. The store deletes the file afterwards. */
+export function dropProof(draft: Draft, id: unknown, who: By = 'person'): Changed & { gone?: string[] } {
+  const was = typeof id === 'string' ? draft.evidence.find((p) => p.id === id) : undefined
+  if (!was) return { ok: false, error: `There is no evidence "${String(id).slice(0, 40)}" in this review.` }
+  if (who === 'agent' && was.by === 'person') return { ok: false, error: 'That evidence is the person’s own, so an agent may not remove it.' }
+  return { ok: true, draft: { ...draft, evidence: draft.evidence.filter((p) => p !== was) }, gone: [was.file] }
+}
+
+/* ------------------------------------------------------------------ *
+ * Replies
+ * ------------------------------------------------------------------ */
+
+export function addReply(draft: Draft, reply: ReplyDraft): Changed {
+  if (draft.replies.filter((r) => !r.sent).length >= MAX_REPLIES) return { ok: false, error: `This review already holds ${MAX_REPLIES} unsent replies.` }
+  /* One reply per thread: a second draft for a thread replaces the agent's unsent one, never the person's. */
+  const same = draft.replies.find((r) => r.thread === reply.thread && !r.sent)
+  if (same && (same.by === 'person' || same.editedAt) && reply.by === 'agent') {
+    return { ok: false, error: 'The person has a reply drafted for that thread already, and it is theirs. Leave it.' }
+  }
+  const replies = same ? draft.replies.map((r) => (r === same ? reply : r)) : [...draft.replies, reply]
+  return { ok: true, draft: { ...draft, replies } }
+}
+
+const findReply = (draft: Draft, id: unknown): ReplyDraft | null => (typeof id === 'string' ? (draft.replies.find((r) => r.id === id) ?? null) : null)
+
+/** The person rewords a reply (and what to change). It is theirs from then on. */
+export function rewordReply(draft: Draft, id: unknown, body: string, todo: string | undefined, now: string): Changed {
+  const was = findReply(draft, id)
+  if (!was) return { ok: false, error: `There is no reply "${String(id).slice(0, 40)}" in this review.` }
+  if (was.sent) return { ok: false, error: 'That reply has been posted, so it is not changed from here.' }
+  return { ok: true, draft: { ...draft, replies: draft.replies.map((r) => (r === was ? { ...r, body, ...(todo !== undefined ? { todo } : {}), editedAt: now } : r)) } }
+}
+
+export function dropReply(draft: Draft, id: unknown): Changed {
+  const was = findReply(draft, id)
+  if (!was) return { ok: false, error: `There is no reply "${String(id).slice(0, 40)}" in this review.` }
+  if (was.sent) return { ok: false, error: 'That reply has been posted, so it is not removed from here.' }
+  return { ok: true, draft: { ...draft, replies: draft.replies.filter((r) => r !== was) } }
+}
+
+export function stampReply(draft: Draft, id: string, sent: { at: string; url?: string }): Draft {
+  return { ...draft, replies: draft.replies.map((r) => (r.id === id && !r.sent ? { ...r, sent } : r)) }
+}
+
+/** The head the forge named when something was last written against it. */
+export const atHead = (draft: Draft, head: string): Draft => (draft.head === head ? draft : { ...draft, head })
 
 /**
  * Set the verdict, the summary, or both.

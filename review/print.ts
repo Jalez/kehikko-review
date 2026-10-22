@@ -1,7 +1,9 @@
 import type { FileDiff } from '../src/diff/parse.ts'
 
 import { proposalBody } from './draft.ts'
-import { short, spell, type Comment, type Draft, type Meta } from './shape.ts'
+import type { Thread } from '../forge/threads.ts'
+
+import { short, spell, stateOf, type Comment, type Draft, type Meta } from './shape.ts'
 
 /**
  * A diff and a draft, as text an agent reads.
@@ -91,7 +93,15 @@ export function printDiff(files: readonly FileDiff[], options: { path?: string; 
 export function printComment(comment: Comment): string {
   const lines = comment.startLine !== undefined ? `${comment.startLine}–${comment.line}` : String(comment.line)
   const frame = comment.view === 'all' ? `whole change at ${short(comment.commit)}` : `commit ${short(comment.commit)}`
-  const state = comment.sent ? (comment.sent.folded ? 'SENT (in the summary, not on its line)' : 'SENT') : 'draft'
+  const state = comment.resolved
+    ? 'SENT, then resolved'
+    : comment.sent
+      ? comment.sent.folded
+        ? 'SENT (in the summary, not on its line)'
+        : 'SENT'
+      : stateOf(comment) === 'kept'
+        ? 'draft, KEPT by the person (theirs now: not reworded or dropped by an agent)'
+        : 'draft'
   return [
     `[${comment.id}] ${comment.path}:${lines} (${comment.side} side, ${frame}) — by ${comment.by === 'agent' ? 'an agent' : 'the person'}, ${state}`,
     ...(comment.meta ? printMeta(comment.meta) : []),
@@ -131,10 +141,38 @@ export function printDraft(draft: Draft): string {
     )
   }
   if (gone.length) out.push('', `${gone.length} already sent (on the tracker; not editable from here):`, ...gone.map(printComment))
+  if (draft.evidence.length) {
+    out.push('', `Evidence (${draft.evidence.length}):`)
+    for (const e of draft.evidence) {
+      out.push(`- [${e.id}] ${e.kind}: ${e.caption} — ${e.file}, ${e.bytes} bytes${e.point ? `, on point ${e.point}` : ''}, by ${e.by === 'agent' ? 'an agent' : 'the person'}${e.run ? ` (run ${e.run})` : ''}`)
+    }
+  }
+  if (draft.replies.length) {
+    out.push('', `Replies to review comments received (${draft.replies.length}):`)
+    for (const r of draft.replies) {
+      out.push(
+        `- [${r.id}] to ${r.from} on ${r.where} (${r.thread}) — by ${r.by === 'agent' ? 'an agent' : 'the person'}${r.editedAt ? ', edited by the person' : ''}, ${r.sent ? 'POSTED' : 'draft'}`,
+        ...r.body.split('\n').map((l) => `    ${l}`),
+        ...(r.todo ? [`  to change: ${r.todo.split('\n').join(' / ')}`] : []),
+      )
+    }
+  }
   if (draft.sent.length) {
     out.push('', 'Sends so far:')
     for (const one of draft.sent) out.push(`- ${one.at}: “${one.verdict}” at ${short(one.head)}, ${one.comments} comment${one.comments === 1 ? '' : 's'}`)
   }
   out.push('', 'Nothing here is posted until the person presses Send on the page.')
+  return out.join('\n')
+}
+
+/** The threads a change received, for an agent drafting replies. */
+export function printThreads(change: string, threads: readonly Thread[]): string {
+  if (!threads.length) return `${change} has no review comments yet.`
+  const out = [`${threads.length} thread${threads.length === 1 ? '' : 's'} on ${change}, as the tracker has them now:`]
+  for (const t of threads) {
+    out.push('', `[${t.id}] ${t.where}${t.resolved === undefined ? '' : t.resolved ? ' — resolved' : ' — open'}`)
+    for (const n of t.notes) out.push(`  ${n.author || 'somebody'}${n.at ? ` (${n.at})` : ''}:`, ...n.body.split('\n').slice(0, 40).map((l) => `    ${l.slice(0, 300)}`))
+  }
+  out.push('', 'draft_reply takes a thread’s id in brackets. Nothing is posted by reading.')
   return out.join('\n')
 }

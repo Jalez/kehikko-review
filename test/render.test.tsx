@@ -6,15 +6,15 @@ import { HostRefused, PAGE_OLD, resetServerStanding } from 'kehikot-module-proto
 import type { Report } from '../review/send.ts'
 import { emptyDraft, proposalBody } from '../review/draft.ts'
 import { shotsOf, type Shots } from '../review/shots.ts'
-import { changeOf, type Comment, type Draft } from '../review/shape.ts'
+import { changeOf, type Comment, type Draft, type Proof, type ReplyDraft } from '../review/shape.ts'
 import { locate } from '../forge/locate.ts'
 import { App, Screen, UNHOSTED } from '../src/app.tsx'
 import { drafts } from '../src/view/holding.ts'
 import { api as realApi, type Api, type ChangeRead, type CommentInput, type Confirmed } from '../src/wire/api.ts'
-import type { HeaderItemInput } from 'kehikot-module-protocol'
+import type { CodeLocation, HeaderItemInput, LocationIntent, LocationSetResult, SharedLocation } from 'kehikot-module-protocol'
 import type { Host, Press } from '../src/wire/use-kehikot.ts'
 
-import { COMMIT_PATCH, FIRST, GH_URL, HEAD, MERGE_BASE, PATCH } from './fake.ts'
+import { FIRST, GH_URL, HEAD, MERGE_BASE } from './fake.ts'
 
 /**
  * The words and the controls on screen, asserted by rendering the real page
@@ -28,7 +28,6 @@ afterEach(cleanup)
 afterEach(() => sessionStorage.clear())
 
 const AT = '2026-10-07T10:00:00.000Z'
-const OTHER_FIRST = 'diff --git a/src/zero.ts b/src/zero.ts\n--- a/src/zero.ts\n+++ b/src/zero.ts\n@@ -1,2 +1,2 @@\n-const zero = 0\n+const zero = 1\n export { zero }\n'
 const target = locate(GH_URL)!
 
 const row = (ref: string, over: Record<string, unknown> = {}) => ({
@@ -140,8 +139,12 @@ const SHOTS: Shots = shotsOf(target, [
 /** An `Api` held in memory. Every call is recorded; `send` posts nothing anywhere. */
 function fakeApi(start: Partial<Draft> = {}) {
   const calls = {
-    diff: [] as [string, string][],
     added: [] as CommentInput[],
+    kept: [] as string[],
+    resolved: [] as [string, boolean][],
+    evidenceDropped: [] as string[],
+    focus: [] as unknown[][],
+    replies: [] as unknown[][],
     sent: [] as Confirmed[],
     verdicts: [] as unknown[][],
     dropped: [] as string[],
@@ -153,10 +156,6 @@ function fakeApi(start: Partial<Draft> = {}) {
   let n = state.draft.comments.length
   const api: Api = {
     change: () => Promise.resolve(change),
-    diff: (_url, view, sha) => {
-      calls.diff.push([view, sha])
-      return Promise.resolve({ text: view === 'all' ? PATCH : COMMIT_PATCH, truncated: false, view, sha, from: 'cli' as const })
-    },
     draft: () => Promise.resolve(state.draft),
     login: () => Promise.resolve('Jalez'),
     addComment: (_p, _u, input) => {
@@ -167,7 +166,43 @@ function fakeApi(start: Partial<Draft> = {}) {
     },
     reword: (_p, _u, id, body) => {
       calls.reworded.push([id, body])
-      state.draft = { ...state.draft, comments: state.draft.comments.map((c) => (c.id === id ? { ...c, body } : c)) }
+      state.draft = { ...state.draft, comments: state.draft.comments.map((c) => (c.id === id ? { ...c, body, ...(c.by === 'agent' ? { kept: AT } : {}) } : c)) }
+      return Promise.resolve(state.draft)
+    },
+    keep: (_p, _u, id) => {
+      calls.kept.push(id)
+      state.draft = { ...state.draft, comments: state.draft.comments.map((c) => (c.id === id ? { ...c, kept: AT } : c)) }
+      return Promise.resolve(state.draft)
+    },
+    resolve: (_p, _u, id, resolved) => {
+      calls.resolved.push([id, resolved])
+      state.draft = { ...state.draft, comments: state.draft.comments.map((c) => (c.id === id ? (resolved ? { ...c, resolved: AT } : (({ resolved: _r, ...rest }) => rest)(c)) : c)) }
+      return Promise.resolve(state.draft)
+    },
+    dropEvidence: (_p, _u, id) => {
+      calls.evidenceDropped.push(id)
+      state.draft = { ...state.draft, evidence: state.draft.evidence.filter((e) => e.id !== id) }
+      return Promise.resolve(state.draft)
+    },
+    evidenceUrl: (_p, _u, id) => `./api/evidence?id=${id}`,
+    evidenceText: (_p, _u, id) => Promise.resolve(`the text of ${id}`),
+    focus: (...args) => {
+      calls.focus.push(args.slice(2))
+      return Promise.resolve()
+    },
+    rewordReply: (_p, _u, id, body, todo) => {
+      calls.replies.push(['reword', id, body, todo])
+      state.draft = { ...state.draft, replies: state.draft.replies.map((r) => (r.id === id ? { ...r, body, todo, editedAt: AT } : r)) }
+      return Promise.resolve(state.draft)
+    },
+    dropReply: (_p, _u, id) => {
+      calls.replies.push(['drop', id])
+      state.draft = { ...state.draft, replies: state.draft.replies.filter((r) => r.id !== id) }
+      return Promise.resolve(state.draft)
+    },
+    sendReply: (_p, _u, id, body) => {
+      calls.replies.push(['send', id, body])
+      state.draft = { ...state.draft, replies: state.draft.replies.map((r) => (r.id === id ? { ...r, sent: { at: AT, url: 'https://github.com/o/r/pull/46#r1' } } : r)) }
       return Promise.resolve(state.draft)
     },
     drop: (_p, _u, id) => {
@@ -195,21 +230,29 @@ function fakeApi(start: Partial<Draft> = {}) {
     },
     send: (_p, _u, confirmed) => {
       calls.sent.push(confirmed)
-      state.draft = { ...state.draft, summary: '', verdict: null, comments: state.draft.comments.map((c) => ({ ...c, sent: { at: AT } })) }
+      state.draft = { ...state.draft, summary: '', verdict: null, comments: state.draft.comments.map((c) => (confirmed.ids.includes(c.id) ? { ...c, sent: { at: AT } } : c)) }
       return Promise.resolve({ draft: state.draft, report: REPORT })
     },
   }
   return { api, calls, state }
 }
 
-/** The page, once the change, its diff and the draft have all arrived. */
+/** The page, once the change and the review have both arrived. */
 async function opened(start: Partial<Draft> = {}, over: Partial<Host> = {}) {
   const made = fakeApi(start)
   const view = render(<Screen host={host(over)} api={made.api} />)
-  await waitFor(() => expect(view.container.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
-  if (over.projectPath !== null) await screen.findByRole('region', { name: 'Your review' })
+  await waitFor(() => expect(view.container.querySelector('[data-ref="gh#46"] h2')?.textContent).toContain('feat'))
+  if (over.projectPath !== null) await screen.findByRole('article', { name: 'The review' })
   return { ...made, ...view }
 }
+
+/** A host that records where the page pointed, and answers as `answer` says. */
+function pointing(answer: LocationSetResult | null = { outcome: 'taken', why: '' }) {
+  const asked: [CodeLocation | null, LocationIntent | undefined][] = []
+  return { asked, locate: (location: CodeLocation | null, intent?: LocationIntent) => (asked.push([location, intent]), Promise.resolve(answer)) }
+}
+
+const card = (id: string) => document.querySelector(`[data-comment="${id}"]`) as HTMLElement
 
 describe('when there is no change to review, the page says which absence it is', () => {
   test('nothing is framing it', () => {
@@ -240,7 +283,7 @@ describe('when there is no change to review, the page says which absence it is',
     const { container } = render(<Screen host={host({ selection: ['gh#12'] }, issue)} api={fakeApi().api} />)
     await screen.findByText(/gh#12 is an issue rather than a change, so there is nothing to review/)
     expect(container.querySelector('[data-kind="issue"]')).toBeTruthy()
-    expect(screen.queryByText(/Your review/)).toBeNull()
+    expect(screen.queryByRole('article', { name: 'The review' })).toBeNull()
   })
 
   test('a reference the tracker has never heard of is named, with the tracker’s reason', async () => {
@@ -263,54 +306,42 @@ describe('when there is no change to review, the page says which absence it is',
     const refusing = host({ request: () => Promise.reject(new HostRefused({ reason: 'failed', error: 'This module was not granted trackers:read.' })) })
     render(<Screen host={refusing} api={fakeApi().api} />)
     await screen.findByText(/Kehikot would not say what gh#46 is: This module was not granted trackers:read\./)
-    expect(screen.queryByText(/Your review/)).toBeNull()
+    expect(screen.queryByRole('article', { name: 'The review' })).toBeNull()
   })
 })
 
-describe('a change, with its commits and a diff', () => {
-  test('the header names it, links to the tracker, and the picker lists every commit', async () => {
+describe('the review, as a document', () => {
+  test('the header names the change and links to the tracker; the View switch is the review or the pictures', async () => {
     const { container } = await opened()
     expect(container.querySelector('[data-ref="gh#46"] h2')?.textContent).toBe('gh#46 feat: an official module list')
-    expect(screen.getByText('open')).toBeTruthy()
     expect(screen.getByText('by Jalez')).toBeTruthy()
     expect((screen.getByText('open on the tracker') as HTMLAnchorElement).href).toBe(GH_URL)
-    expect(screen.queryByLabelText('Which changes to show')).toBeNull()
-    expect(optionsOf('showing')).toEqual(['All changes', '11111111 first: lay the file down', 'f982d895 second: change it', 'Before / after'])
-    expect(header('showing')).toMatchObject({ kind: 'switch', value: 'all' })
+    expect(optionsOf('showing')).toEqual(['Review', 'Before / after'])
+    expect(header('showing')).toMatchObject({ kind: 'switch', value: 'review' })
   })
 
-  test('every file of the diff is drawn, with both line-number gutters and the marks in the text', async () => {
-    const { container, calls } = await opened()
-    expect(calls.diff).toEqual([['all', HEAD]])
-    expect([...container.querySelectorAll('[data-file]')].map((f) => f.getAttribute('data-file'))).toEqual(['src/one.ts', 'src/gone.ts', 'logo.png'])
-    expect(container.textContent).toContain('3 files')
-    const rows = [...container.querySelectorAll('[data-file="src/one.ts"] .diff-row')].map((r) => r.textContent)
-    expect(rows).toContain('11-was this')
-    expect(rows).toContain('11+is this')
-    expect(screen.getByText(/Git says this file is binary/)).toBeTruthy()
+  test('no diff is drawn here any more: no file, no line gutter, no commit picker', async () => {
+    const { container } = await opened({ comments: [comment({ id: 'c-1' })] })
+    expect(container.querySelector('[data-file]')).toBeNull()
+    expect(container.querySelector('.diff-row')).toBeNull()
+    expect(optionsOf('showing').some((label) => label.includes('first: lay the file down'))).toBe(false)
   })
 
-  test('the picker shows how many draft comments sit in each view, and files say so too', async () => {
-    const { container } = await opened({
-      comments: [comment({ id: 'c-1' }), comment({ id: 'c-2', view: 'commit', commit: HEAD, line: 12 }), comment({ id: 'c-3', view: 'commit', commit: HEAD, line: 11 })],
-    })
-    expect(optionsOf('showing')).toEqual(['All changes · 1 comment', '11111111 first: lay the file down', 'f982d895 second: change it · 2 comments', 'Before / after'])
-    expect(within(container.querySelector('[data-file="src/one.ts"]') as HTMLElement).getByTestId('file-comments').textContent).toBe('1 draft')
+  test('verdict and summary come first, then the points, the evidence, and the send', async () => {
+    const { container } = await opened({ comments: [comment({ id: 'c-1' })], summary: 'Overall fine.', verdict: 'approve' })
+    const order = [...container.querySelectorAll('[aria-label="The review"] > section')].map((s) => s.getAttribute('aria-label'))
+    expect(order).toEqual(['Verdict and summary', 'Points', 'Evidence', 'Send'])
+    expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe('Overall fine.')
+    expect(screen.getByRole('radio', { name: 'Approve' }).getAttribute('aria-checked')).toBe('true')
   })
 
-  test('picking a commit reads that commit’s own diff, and shows only the comments written in it', async () => {
-    const { container, calls } = await opened({
-      comments: [comment({ id: 'c-1', body: 'on the whole change' }), comment({ id: 'c-2', view: 'commit', commit: HEAD, line: 12, body: 'on the commit' })],
-    })
-    const inline = () => [...container.querySelectorAll('.diff-inset [data-comment]')].map((c) => c.getAttribute('data-comment'))
-    expect(inline()).toEqual(['c-1'])
-    press('showing', HEAD)
-    await waitFor(() => expect(calls.diff).toEqual([['all', HEAD], ['commit', HEAD]]))
-    await waitFor(() => expect(inline()).toEqual(['c-2']))
-    /* Both are still in the review panel, each saying which diff it belongs to. */
-    const panel = within(screen.getByRole('region', { name: 'Your review' }))
-    expect(panel.getByText('src/one.ts:11 · all changes at f982d895')).toBeTruthy()
-    expect(panel.getByText('src/one.ts:12 · commit f982d895')).toBeTruthy()
+  test('a point is a card with its code reference, its quoted code, its words and its state', async () => {
+    await opened({ comments: [comment({ id: 'c-1', startLine: 9, line: 11, quote: 'const a = 1\nconst b = 2' })] })
+    const one = within(card('c-1'))
+    expect(one.getByRole('button', { name: 'src/one.ts:9-11@f982d895' })).toBeTruthy()
+    expect(card('c-1').querySelector('pre')?.textContent).toBe('const a = 1\nconst b = 2')
+    expect(card('c-1').textContent).toContain('words of c-1')
+    expect(card('c-1').getAttribute('data-state')).toBe('draft')
   })
 
   test('with several changes selected it reviews one and offers the others', async () => {
@@ -318,7 +349,6 @@ describe('a change, with its commits and a diff', () => {
     const made = fakeApi()
     const { container } = render(<Screen host={host({ selection: ['gh#46', 'gh#47'] }, two)} api={made.api} />)
     await waitFor(() => expect(container.querySelector('[data-ref="gh#46"]')).toBeTruthy())
-    expect(screen.queryByRole('group', { name: 'Which change to review' })).toBeNull()
     await waitFor(() => expect(header('change')).toBeTruthy())
     expect(header('change')).toMatchObject({ kind: 'switch', value: 'c0', options: [{ id: 'c0', label: 'gh#46' }, { id: 'c1', label: 'gh#47' }] })
     expect(String(press('change', 'c9'))).toContain('no longer')
@@ -329,138 +359,251 @@ describe('a change, with its commits and a diff', () => {
 
   test('a tracker that will not answer is quoted, with a way to try again', async () => {
     const made = fakeApi()
-    made.api.change = () => Promise.reject(new Error('gh: To get started with GitHub CLI, please run: gh auth login'))
+    let fail = true
+    made.api.change = () => (fail ? Promise.reject(new Error('gh: To get started with GitHub CLI, please run: gh auth login')) : Promise.resolve(change))
     render(<Screen host={host()} api={made.api} />)
     await screen.findByText(/gh auth login/)
-    expect(screen.getByText('Try again')).toBeTruthy()
+    fail = false
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await screen.findByRole('article', { name: 'The review' })
   })
 
-  test('with no project open the diff is readable and no line is a target', async () => {
-    const { container } = await opened({}, { projectPath: null, project: null })
-    expect(screen.getByText(/No project is open, so there is nowhere to keep a draft/)).toBeTruthy()
-    expect(container.querySelectorAll('.diff-row button')).toHaveLength(0)
-    expect(screen.queryByText(/Send review/)).toBeNull()
+  test('with no project open it says there is nowhere to keep a review', async () => {
+    render(<Screen host={host({ projectPath: null })} api={fakeApi().api} />)
+    await screen.findByText(/No project is open, so there is nowhere to keep a review/)
+    expect(screen.queryByRole('article', { name: 'The review' })).toBeNull()
   })
 })
 
-describe('composing a comment', () => {
-  test('pressing a line number opens a box under that line, and saving anchors it to the view and commit on screen', async () => {
-    const { container, calls } = await opened()
-    expect(container.querySelector('.diff-inset')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Comment on new line 11 of src/one.ts' }))
-    const box = screen.getByLabelText('Comment on new line 11 of src/one.ts', { selector: 'textarea' }) as HTMLTextAreaElement
-    expect(container.querySelectorAll('[data-picked="yes"]')).toHaveLength(1)
-    /* An empty comment cannot be saved. */
-    expect((screen.getByRole('button', { name: 'Add to review' }) as HTMLButtonElement).disabled).toBe(true)
-
-    fireEvent.change(box, { target: { value: 'This reads wrong.' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
-    await waitFor(() => expect(calls.added).toEqual([{ view: 'all', commit: HEAD, path: 'src/one.ts', side: 'new', line: 11, body: 'This reads wrong.' }]))
-
-    /* It is drawn under its line, marked as the person's, editable and removable. */
-    const card = await waitFor(() => container.querySelector('.diff-inset [data-comment="c-1"]') as HTMLElement)
-    expect(within(card).getByText('you')).toBeTruthy()
-    expect(within(card).getByRole('button', { name: 'Edit' })).toBeTruthy()
-    expect(within(card).getByRole('button', { name: 'Remove' })).toBeTruthy()
-    expect(container.querySelector('textarea[id^="box-"]')).toBeNull()
-    expect(screen.getByText(/1 draft comment$/)).toBeTruthy()
+describe('a point’s code reference, and a comment asked for at a place', () => {
+  test('pressing the code reference points Source and Diff there: location.set, intent show', async () => {
+    const at = pointing()
+    await opened({ comments: [comment({ id: 'c-1', startLine: 9, line: 11 }), comment({ id: 'c-2', side: 'old', line: 4 })] }, { locate: at.locate })
+    fireEvent.click(within(card('c-1')).getByRole('button', { name: /src\/one\.ts:9-11/ }))
+    await waitFor(() => expect(at.asked).toHaveLength(1))
+    expect(at.asked[0]).toEqual([{ change: 'gh#46', path: 'src/one.ts', line: 9, endLine: 11, side: 'new', commit: HEAD }, 'show'])
+    /* A removed line counts on the base, which a whole-change point does not record: no commit. */
+    fireEvent.click(within(card('c-2')).getByRole('button', { name: /src\/one\.ts:4/ }))
+    await waitFor(() => expect(at.asked).toHaveLength(2))
+    expect(at.asked[1]).toEqual([{ change: 'gh#46', path: 'src/one.ts', line: 4, side: 'old' }, 'show'])
+    expect(screen.queryByTestId('located')).toBeNull()
   })
 
-  test('shift-pressing another line of the same column covers the range; the old gutter is the old side', async () => {
-    const { container, calls } = await opened()
-    fireEvent.click(screen.getByRole('button', { name: 'Comment on new line 11 of src/one.ts' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Comment on new line 13 of src/one.ts' }), { shiftKey: true })
-    expect(container.querySelectorAll('[data-picked="yes"]')).toHaveLength(3)
-    fireEvent.change(screen.getByLabelText('Comment on new lines 11–13 of src/one.ts', { selector: 'textarea' }), { target: { value: 'All of this.' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
-    await waitFor(() => expect(calls.added[0]).toEqual({ view: 'all', commit: HEAD, path: 'src/one.ts', side: 'new', line: 13, startLine: 11, body: 'All of this.' }))
-
-    /* A shift-press in the OTHER column starts again rather than making a range across sides. */
-    fireEvent.click(screen.getByRole('button', { name: 'Comment on new line 11 of src/one.ts' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Comment on old line 11 of src/one.ts' }), { shiftKey: true })
-    expect(screen.getByLabelText('Comment on old line 11 of src/one.ts', { selector: 'textarea' })).toBeTruthy()
+  test('a press the host did not take says why, on the card', async () => {
+    const at = pointing({ outcome: 'not-selected', why: '' })
+    await opened({ comments: [comment({ id: 'c-1' })] }, { locate: at.locate })
+    fireEvent.click(within(card('c-1')).getByRole('button', { name: /src\/one\.ts:11/ }))
+    expect((await within(card('c-1')).findByTestId('located')).textContent).toContain('not selected on the canvas')
   })
 
-  test('in a commit’s view the comment is anchored to that commit', async () => {
+  const asking = (over: Partial<SharedLocation> = {}): SharedLocation => ({
+    change: 'gh#46',
+    path: 'src/one.ts',
+    line: 12,
+    side: 'new',
+    commit: HEAD,
+    intent: 'comment',
+    by: 'kehikot.source',
+    at: '2026-10-22T10:00:00.000Z',
+    ...over,
+  })
+
+  test('“comment here” opens New point at that place, and saving anchors it there', async () => {
+    const made = fakeApi()
+    const view = render(<Screen host={host({ location: asking({ line: 10, endLine: 12 }) })} api={made.api} />)
+    const box = await screen.findByLabelText('New point at src/one.ts:10-12', { selector: 'textarea' })
+    fireEvent.change(box, { target: { value: 'This branch never runs.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
+    await waitFor(() => expect(made.calls.added).toEqual([{ view: 'all', commit: HEAD, path: 'src/one.ts', side: 'new', line: 12, startLine: 10, body: 'This branch never runs.' }]))
+    await waitFor(() => expect(screen.queryByTestId('new-point')).toBeNull())
+    /* The same ask, delivered again, is not opened twice. */
+    view.rerender(<Screen host={host({ location: asking({ line: 10, endLine: 12 }) })} api={made.api} />)
+    expect(screen.queryByTestId('new-point')).toBeNull()
+    /* A new ask at the same place is: `at` moved. */
+    view.rerender(<Screen host={host({ location: asking({ line: 10, endLine: 12, at: '2026-10-22T10:01:00.000Z' }) })} api={made.api} />)
+    await screen.findByTestId('new-point')
+  })
+
+  test('a removed line is asked at the head the page read, whatever commit the base had', async () => {
+    const made = fakeApi()
+    render(<Screen host={host({ location: asking({ side: 'old', line: 11, commit: MERGE_BASE }) })} api={made.api} />)
+    const box = await screen.findByLabelText('New point at src/one.ts:11 (removed)', { selector: 'textarea' })
+    fireEvent.change(box, { target: { value: 'Keep this.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
+    await waitFor(() => expect(made.calls.added[0]).toMatchObject({ commit: HEAD, side: 'old', line: 11 }))
+  })
+
+  test('“show here”, another change’s place, or this page’s own pointing opens nothing', async () => {
+    const made = fakeApi()
+    const view = render(<Screen host={host({ location: asking({ intent: 'show' }) })} api={made.api} />)
+    await screen.findByRole('article', { name: 'The review' })
+    expect(screen.queryByTestId('new-point')).toBeNull()
+    view.rerender(<Screen host={host({ location: asking({ change: 'gh#47' }) })} api={made.api} />)
+    view.rerender(<Screen host={host({ location: asking({ by: 'kehikot.review' }) })} api={made.api} />)
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 20))))
+    expect(screen.queryByTestId('new-point')).toBeNull()
+  })
+
+  test('the page tells its server what it has open and where somebody points, for read_focus', async () => {
+    const made = fakeApi()
+    render(<Screen host={host({ location: asking({ intent: 'show' }) })} api={made.api} />)
+    await waitFor(() => expect(made.calls.focus.at(-1)).toEqual(['gh#46', 'feat: an official module list', asking({ intent: 'show' })]))
+  })
+
+  test('New point… takes a file and lines typed by the person', async () => {
     const { calls } = await opened()
-    press('showing', HEAD)
-    await waitFor(() => expect(calls.diff).toHaveLength(2))
-    fireEvent.click(await screen.findByRole('button', { name: 'Comment on new line 12 of src/one.ts' }))
-    fireEvent.change(screen.getByLabelText('Comment on new line 12 of src/one.ts', { selector: 'textarea' }), { target: { value: 'In this commit.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'New point…' }))
+    const where = within(screen.getByTestId('new-point-where'))
+    expect((where.getByRole('button', { name: 'Write the point' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(where.getByLabelText('File'), { target: { value: 'src/one.ts' } })
+    fireEvent.change(where.getByLabelText('Lines'), { target: { value: '11' } })
+    fireEvent.click(where.getByRole('button', { name: 'Write the point' }))
+    fireEvent.change(screen.getByLabelText('New point at src/one.ts:11', { selector: 'textarea' }), { target: { value: 'Why?' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
-    await waitFor(() => expect(calls.added).toEqual([{ view: 'commit', commit: HEAD, path: 'src/one.ts', side: 'new', line: 12, body: 'In this commit.' }]))
+    await waitFor(() => expect(calls.added).toEqual([{ view: 'all', commit: HEAD, path: 'src/one.ts', side: 'new', line: 11, body: 'Why?' }]))
   })
 
   test('a refusal from the server is shown under the words, and the words are kept', async () => {
     const made = fakeApi()
-    made.api.addComment = () => Promise.reject(new Error('Line 11 on the new side of "src/one.ts" is not in the diff of the whole change at f982d895.'))
-    const view = render(<Screen host={host()} api={made.api} />)
-    await waitFor(() => expect(view.container.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
-    await screen.findByRole('region', { name: 'Your review' })
-    fireEvent.click(screen.getByRole('button', { name: 'Comment on new line 11 of src/one.ts' }))
-    const box = screen.getByLabelText('Comment on new line 11 of src/one.ts', { selector: 'textarea' }) as HTMLTextAreaElement
-    fireEvent.change(box, { target: { value: 'A paragraph I do not want to lose.' } })
+    made.api.addComment = () => Promise.reject(new Error('Line 12 is not in the diff of the whole change at f982d895.'))
+    render(<Screen host={host({ location: asking() })} api={made.api} />)
+    const box = (await screen.findByLabelText('New point at src/one.ts:12', { selector: 'textarea' })) as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'Keep me.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
-    await screen.findByText(/is not in the diff of the whole change/)
-    expect(box.value).toBe('A paragraph I do not want to lose.')
+    await screen.findByText('Line 12 is not in the diff of the whole change at f982d895.')
+    expect(box.value).toBe('Keep me.')
   })
+})
 
-  test('an agent’s comment is marked as an agent’s, and removing takes two presses', async () => {
-    const { container, calls } = await opened({ comments: [comment({ id: 'c-1', by: 'agent' })] })
-    const card = container.querySelector('.diff-inset [data-comment="c-1"]') as HTMLElement
-    expect(within(card).getByText('agent')).toBeTruthy()
-    fireEvent.click(within(card).getByRole('button', { name: 'Remove' }))
+describe('what the person does with a point', () => {
+  test('an agent’s point is marked as an agent’s and offers Keep; Remove takes two presses', async () => {
+    const { calls } = await opened({ comments: [comment({ id: 'c-1', by: 'agent' }), comment({ id: 'c-2' })] })
+    expect(within(card('c-1')).getByText('agent')).toBeTruthy()
+    expect(within(card('c-2')).queryByRole('button', { name: 'Keep' })).toBeNull()
+    fireEvent.click(within(card('c-1')).getByRole('button', { name: 'Keep' }))
+    await waitFor(() => expect(calls.kept).toEqual(['c-1']))
+    await waitFor(() => expect(card('c-1').getAttribute('data-state')).toBe('kept'))
+    expect(within(card('c-1')).queryByRole('button', { name: 'Keep' })).toBeNull()
+    fireEvent.click(within(card('c-2')).getByRole('button', { name: 'Remove' }))
     expect(calls.dropped).toEqual([])
-    fireEvent.click(within(card).getByRole('button', { name: 'Remove it?' }))
-    await waitFor(() => expect(calls.dropped).toEqual(['c-1']))
-    await waitFor(() => expect(container.querySelector('[data-comment="c-1"]')).toBeNull())
+    fireEvent.click(within(card('c-2')).getByRole('button', { name: 'Remove it?' }))
+    await waitFor(() => expect(calls.dropped).toEqual(['c-2']))
   })
 
-  test('a comment an agent adds over MCP appears when the window regains focus', async () => {
-    const { container, state } = await opened()
-    expect(container.querySelector('[data-comment]')).toBeNull()
-    state.draft = { ...state.draft, comments: [comment({ id: 'c-9', by: 'agent', body: 'Added from outside.' })] }
-    fireEvent(window, new Event('focus'))
-    await waitFor(() => expect(container.querySelector('.diff-inset [data-comment="c-9"]')).toBeTruthy())
+  test('Edit rewords a point in place', async () => {
+    const { calls } = await opened({ comments: [comment({ id: 'c-1', body: 'first words' })] })
+    fireEvent.click(within(card('c-1')).getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByLabelText(/Reword the point on/, { selector: 'textarea' }), { target: { value: 'better words' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(calls.reworded).toEqual([['c-1', 'better words']]))
   })
 
-  test('a comment written against an older head is not drawn on today’s lines, and is marked in the panel', async () => {
-    const older = '2222222222222222222222222222222222222222'
-    const { container } = await opened({ comments: [comment({ id: 'c-1', commit: older })] })
-    expect(container.querySelector('.diff-inset')).toBeNull()
-    const panel = within(screen.getByRole('region', { name: 'Your review' }))
-    expect(panel.getByText(/Written against 22222222, an older head: the change has been pushed to since\. It is not moved/)).toBeTruthy()
+  test('a point an agent adds over MCP appears when the window regains focus', async () => {
+    const made = await opened()
+    made.state.draft = { ...made.state.draft, comments: [comment({ id: 'c-9', by: 'agent', body: 'from the agent' })] }
+    act(() => void window.dispatchEvent(new Event('focus')))
+    await screen.findByText('from the agent')
   })
 
-  test('a sent comment is shown as sent and offers neither edit nor remove', async () => {
-    const { container } = await opened({ comments: [comment({ id: 'c-1', sent: { at: AT, url: `${GH_URL}#r1` } })] })
-    const card = container.querySelector('.diff-inset [data-comment="c-1"]') as HTMLElement
-    expect(card.getAttribute('data-sent')).toBe('yes')
-    expect(within(card).getByText('sent')).toBeTruthy()
-    expect(within(card).queryByRole('button', { name: 'Edit' })).toBeNull()
-    expect(within(card).queryByRole('button', { name: 'Remove' })).toBeNull()
-    expect(screen.getByText(/0 draft comments, 1 sent/)).toBeTruthy()
+  test('a point written against an older head is marked, not moved', async () => {
+    await opened({ comments: [comment({ id: 'c-1', commit: FIRST })] })
+    expect(card('c-1').textContent).toContain('an older head')
+  })
+
+  test('a sent point says so, offers neither edit nor remove, and can be resolved and opened again', async () => {
+    const { calls } = await opened({ comments: [comment({ id: 'c-1', sent: { at: AT, url: 'https://github.com/o/r/pull/46#r1' } })] })
+    expect(card('c-1').getAttribute('data-state')).toBe('sent')
+    expect(within(card('c-1')).queryByRole('button', { name: 'Edit' })).toBeNull()
+    expect(within(card('c-1')).queryByRole('button', { name: 'Remove' })).toBeNull()
+    fireEvent.click(within(card('c-1')).getByRole('button', { name: 'Mark resolved' }))
+    await waitFor(() => expect(calls.resolved).toEqual([['c-1', true]]))
+    await waitFor(() => expect(card('c-1').getAttribute('data-state')).toBe('resolved'))
+    fireEvent.click(within(card('c-1')).getByRole('button', { name: 'Open again' }))
+    await waitFor(() => expect(calls.resolved).toEqual([['c-1', true], ['c-1', false]]))
+  })
+})
+
+describe('evidence', () => {
+  const proof = (over: Partial<Proof> & { id: string }): Proof => ({ kind: 'screenshot', caption: `caption of ${over.id}`, file: `${over.id}.png`, bytes: 100, by: 'agent', at: AT, ...over })
+
+  test('a point shows its evidence small; a screenshot opens full size, a log opens as text', async () => {
+    await opened({
+      comments: [comment({ id: 'c-1' })],
+      evidence: [proof({ id: 'e-000000000001', point: 'c-1' }), proof({ id: 'e-000000000002', kind: 'log', file: 'e-000000000002.txt', point: 'c-1' }), proof({ id: 'e-000000000003' })],
+    })
+    const small = within(card('c-1')).getByTestId('point-evidence')
+    expect([...small.querySelectorAll('[data-evidence]')].map((e) => e.getAttribute('data-evidence'))).toEqual(['e-000000000001', 'e-000000000002'])
+    const img = small.querySelector('img')!
+    expect(img.getAttribute('src')).toBe('./api/evidence?id=e-000000000001')
+    expect(img.getAttribute('referrerpolicy')).toBe('no-referrer')
+    fireEvent.click(img.closest('button')!)
+    expect((await screen.findByTestId('evidence-full')).getAttribute('src')).toBe('./api/evidence?id=e-000000000001')
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByTestId('evidence-full')).toBeNull())
+    fireEvent.click(within(small).getByTitle('Open: caption of e-000000000002'))
+    await waitFor(() => expect(screen.getByTestId('evidence-text').textContent).toBe('the text of e-000000000002'))
+  })
+
+  test('the Evidence section lists everything, says which point it supports, and the person can remove it', async () => {
+    const { calls } = await opened({ comments: [comment({ id: 'c-1' })], evidence: [proof({ id: 'e-000000000001', point: 'c-1', run: 'review-pass' })] })
+    const section = within(screen.getByRole('region', { name: 'Evidence' }))
+    expect(section.getByText(/collected by an agent \(run review-pass\) · on src\/one\.ts:11@f982d895/)).toBeTruthy()
+    fireEvent.click(section.getByRole('button', { name: 'Remove' }))
+    fireEvent.click(section.getByRole('button', { name: 'Remove it?' }))
+    await waitFor(() => expect(calls.evidenceDropped).toEqual(['e-000000000001']))
+  })
+})
+
+describe('replies to the reviewers of the person’s own change', () => {
+  const REPLY: ReplyDraft = { id: 'r-000000000001', thread: 'gh-comment:7', where: 'src/one.ts:11', from: 'ada', said: 'Why this?', body: 'Because of the parser.', todo: 'Nothing.', by: 'agent', at: AT }
+
+  test('a reply shows what was said and the answer; posting takes two presses and posts the words shown', async () => {
+    const { calls } = await opened({ replies: [REPLY] })
+    const reply = within(document.querySelector('[data-reply="r-000000000001"]') as HTMLElement)
+    expect(reply.getByText(/Why this\?/)).toBeTruthy()
+    expect(reply.getByText('Because of the parser.')).toBeTruthy()
+    fireEvent.click(reply.getByRole('button', { name: 'Post reply…' }))
+    expect(calls.replies).toEqual([])
+    expect(reply.getByTestId('reply-confirm').textContent).toContain('Nothing has been posted yet')
+    fireEvent.click(reply.getByRole('button', { name: 'Post it' }))
+    await waitFor(() => expect(calls.replies).toEqual([['send', 'r-000000000001', 'Because of the parser.']]))
+    await waitFor(() => expect(reply.getByText('posted')).toBeTruthy())
+  })
+
+  test('the person edits a reply and what to change', async () => {
+    const { calls } = await opened({ replies: [REPLY] })
+    const reply = within(document.querySelector('[data-reply="r-000000000001"]') as HTMLElement)
+    fireEvent.click(reply.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(reply.getByLabelText('Your reply'), { target: { value: 'Fixed in the next push.' } })
+    fireEvent.click(reply.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(calls.replies).toEqual([['reword', 'r-000000000001', 'Fixed in the next push.', 'Nothing.']]))
   })
 })
 
 describe('sending', () => {
   test('the first press shows exactly what will be posted and posts nothing; the second posts that', async () => {
-    const { calls } = await opened({ comments: [comment({ id: 'c-1' }), comment({ id: 'c-2', by: 'agent', line: 12 })], verdict: 'approve', summary: 'Looks right.' })
+    const { calls } = await opened({
+      comments: [comment({ id: 'c-1' }), comment({ id: 'c-2', by: 'agent', line: 12, kept: AT }), comment({ id: 'c-3', by: 'agent', line: 13 })],
+      verdict: 'approve',
+      summary: 'Looks right.',
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Send review…' }))
     const confirm = within(await screen.findByTestId('confirm'))
     expect(confirm.getByText('Nothing has been posted yet. This is what will be:')).toBeTruthy()
-    expect(confirm.getByText(/2 comments, 1 of them drafted by an agent and posted under your name\./)).toBeTruthy()
+    expect(confirm.getByText(/2 points, 1 of them drafted by an agent and kept by you, posted under your name\./)).toBeTruthy()
+    expect(confirm.getByText(/1 agent point you have not kept stays here as a draft, unsent\./)).toBeTruthy()
     expect(confirm.getByText('A summary of 12 characters.')).toBeTruthy()
     expect(confirm.getByText('Approve')).toBeTruthy()
     await waitFor(() => expect(screen.getByTestId('confirm').textContent).toContain('To o/r#46 on GitHub, through your own gh login — as Jalez.'))
     expect(calls.sent).toEqual([])
 
     fireEvent.click(confirm.getByRole('button', { name: 'Post it to GitHub' }))
+    /* Only the person's point and the one they kept. */
     await waitFor(() => expect(calls.sent).toEqual([{ ids: ['c-1', 'c-2'], verdict: 'approve', summary: 'Looks right.' }]))
     const report = within(await screen.findByTestId('report'))
     expect(report.getByText('Sent.')).toBeTruthy()
-    expect(report.getByText('1 comment was posted to GitHub on its line.')).toBeTruthy()
     expect(screen.queryByTestId('confirm')).toBeNull()
+    expect(card('c-3').getAttribute('data-sent')).toBe('no')
   })
 
   test('“Not yet” closes the confirmation and nothing was sent', async () => {
@@ -478,36 +621,33 @@ describe('sending', () => {
     expect(screen.queryByTestId('confirm')).toBeNull()
     fireEvent.click(screen.getByRole('radio', { name: 'Request changes' }))
     await waitFor(() => expect(calls.verdicts).toEqual([['request-changes', undefined]]))
-    await waitFor(() => expect(screen.getByRole('radio', { name: 'Request changes' }).getAttribute('aria-checked')).toBe('true'))
   })
 
   test('the summary is saved when the box is left, and before a confirmation is shown', async () => {
     const { calls } = await opened({ verdict: 'approve' })
-    const summary = screen.getByLabelText(/Summary/) as HTMLTextAreaElement
-    fireEvent.change(summary, { target: { value: 'Ship it.' } })
+    fireEvent.change(screen.getByLabelText(/Summary/), { target: { value: 'Ship it.' } })
     expect(calls.verdicts).toEqual([])
     fireEvent.click(screen.getByRole('button', { name: 'Send review…' }))
     const confirm = within(await screen.findByTestId('confirm'))
     expect(calls.verdicts).toEqual([[undefined, 'Ship it.']])
-    expect(confirm.getByText('A summary of 8 characters.')).toBeTruthy()
-    expect(confirm.getByText('0 comments.')).toBeTruthy()
+    expect(confirm.getByText('0 points.')).toBeTruthy()
   })
 
-  test('with nothing to send, Send is not offered as a live button', async () => {
-    await opened()
+  test('with nothing the person may send, Send is not offered as a live button', async () => {
+    await opened({ comments: [comment({ id: 'c-1', by: 'agent' })] })
     expect((screen.getByRole('button', { name: 'Send review…' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('region', { name: 'Send' }).textContent).toContain('1 agent point is not kept yet')
   })
 
-  test('a send that is refused shows the tracker’s words and leaves the draft as the server says it is', async () => {
+  test('a send that is refused shows the tracker’s words and leaves the review as the server says it is', async () => {
     const made = fakeApi({ comments: [comment({ id: 'c-1' })], verdict: 'approve' })
-    made.api.send = () => Promise.reject(new Error('The draft changed after you looked at it, so nothing was sent.'))
-    const view = render(<Screen host={host()} api={made.api} />)
-    await waitFor(() => expect(view.container.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
+    made.api.send = () => Promise.reject(new Error('The review changed after you looked at it, so nothing was sent.'))
+    render(<Screen host={host()} api={made.api} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Send review…' }))
     fireEvent.click(within(await screen.findByTestId('confirm')).getByRole('button', { name: 'Post it to GitHub' }))
-    await screen.findByText('The draft changed after you looked at it, so nothing was sent.')
+    await screen.findByText('The review changed after you looked at it, so nothing was sent.')
     expect(screen.queryByTestId('report')).toBeNull()
-    expect(view.container.querySelector('[data-comment="c-1"]')?.getAttribute('data-sent')).toBe('no')
+    expect(card('c-1').getAttribute('data-sent')).toBe('no')
   })
 })
 
@@ -578,7 +718,7 @@ describe('this app’s own server: the ticket a write carries, and the cover whe
     await act(async () => void (await realApi.drop('/p', GH_URL, 'c-1').catch(() => {})))
     expect(cover()?.getAttribute('data-cover')).toBe('stale')
     expect(cover()?.textContent).toContain('This page is older than its server')
-    expect(view.querySelector('[data-file="src/one.ts"]')?.closest('[hidden]')).not.toBeNull()
+    expect(view.querySelector('[aria-label="The review"]')?.closest('[hidden]')).not.toBeNull()
   })
 
   test('its own server not answering: the down cover over the mounted review, and Try again brings it back', async () => {
@@ -587,8 +727,8 @@ describe('this app’s own server: the ticket a write carries, and the cover whe
     await act(async () => void (await realApi.draft('/p', GH_URL).catch(() => {})))
     expect(cover()?.getAttribute('data-cover')).toBe('down')
     expect(cover()?.textContent).toContain('Review’s own server is not answering.')
-    /* Hidden, not gone: the diff and anything typed against it are still there. */
-    const file = view.querySelector('[data-file="src/one.ts"]')
+    /* Hidden, not gone: the review and anything typed in it are still there. */
+    const file = view.querySelector('[aria-label="The review"]')
     expect(file?.closest('[hidden]')).not.toBeNull()
     await act(async () => {
       fireEvent.click(within(cover() as HTMLElement).getByRole('button', { name: 'Try again' }))
@@ -602,7 +742,7 @@ describe('this app’s own server: the ticket a write carries, and the cover whe
     })
     expect(cover()).toBeNull()
     expect(calls.at(-1)?.url).toBe('./healthz')
-    expect(view.querySelector('[data-file="src/one.ts"]')).toBe(file)
+    expect(view.querySelector('[aria-label="The review"]')).toBe(file)
   })
 
   test('the real page waits, then says nothing is framing it; a greeting brings the host’s theme and no cover', async () => {
@@ -634,141 +774,40 @@ describe('this app’s own server: the ticket a write carries, and the cover whe
 
 /*
  * What was being typed survives a reload of the page. A stale page reloads itself — on the Save
- * press that found it out, or on the draft re-read — so every box writes its words as they change,
- * under the project, the change and exactly what they were aimed at, and a fresh page reopens the
- * box that was open. "Reload" here is unmounting the page and mounting a new one over the same
- * sessionStorage, which is what a reload is to this code.
+ * press that found it out, or on the review re-read — so every box writes its words as they change,
+ * under the project, the change and exactly what they were aimed at. "Reload" here is unmounting the
+ * page and mounting a new one over the same sessionStorage, which is what a reload is to this code.
  */
 describe('typed words are held across a reload, aimed at what they were typed on', () => {
   const P = '/work/thesis'
-  const LINE = 'Comment on new line 11 of src/one.ts'
-  const box = (label = LINE) => screen.getByLabelText(label, { selector: 'textarea' }) as HTMLTextAreaElement
   const held = (project = P) => Object.entries(drafts.at(project).all())
-  /** A new page over the same tab's storage, with whatever the server holds now. */
   const reload = async (start: Partial<Draft> = {}, over: Partial<Host> = {}) => {
     cleanup()
     return opened(start, over)
   }
 
-  test('a new comment: typed → reload → its line is picked and its box is open with the words', async () => {
-    await opened()
-    fireEvent.click(screen.getByRole('button', { name: LINE }))
-    fireEvent.change(box(), { target: { value: 'This reads wrong, because' } })
-    expect(held()).toHaveLength(1)
-    expect(held()[0]?.[0]).toBe(`${GH_URL}|new:all:${HEAD}:new:11:11:src/one.ts`)
-
-    await reload()
-    expect(box().value).toBe('This reads wrong, because')
-    /* On that line and on no other. */
-    expect(screen.queryByLabelText('Comment on new line 12 of src/one.ts', { selector: 'textarea' })).toBeNull()
-    expect(screen.queryByTestId('kept-words')).toBeNull()
-  })
-
-  test('saved → cleared; cancelled → cleared; another line pressed → cleared', async () => {
-    const { calls } = await opened()
-    fireEvent.click(screen.getByRole('button', { name: LINE }))
-    fireEvent.change(box(), { target: { value: 'Kept by the store.' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
-    await waitFor(() => expect(calls.added).toHaveLength(1))
-    await waitFor(() => expect(held()).toEqual([]))
-
-    fireEvent.click(screen.getByRole('button', { name: LINE }))
-    fireEvent.change(box(), { target: { value: 'Thrown away.' } })
-    expect(held()).toHaveLength(1)
+  test('a new point at a place: typed → reload → asked again there, its words are back', async () => {
+    const at: SharedLocation = { change: 'gh#46', path: 'src/one.ts', line: 12, side: 'new', intent: 'comment', at: 'a' }
+    await opened({}, { location: at })
+    fireEvent.change(screen.getByLabelText('New point at src/one.ts:12', { selector: 'textarea' }), { target: { value: 'Half a thought' } })
+    expect(held()[0]?.[0]).toBe(`${GH_URL}|new:new:12:12:src/one.ts`)
+    await reload({}, { location: { ...at, at: 'b' } })
+    expect((screen.getByLabelText('New point at src/one.ts:12', { selector: 'textarea' }) as HTMLTextAreaElement).value).toBe('Half a thought')
+    /* Cancel is throwing them away on purpose. */
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(held()).toEqual([])
-
-    fireEvent.click(screen.getByRole('button', { name: LINE }))
-    fireEvent.change(box(), { target: { value: 'Left for another line.' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Comment on new line 12 of src/one.ts' }))
-    expect(held()).toEqual([])
-
-    await reload()
-    expect(screen.queryByLabelText(LINE, { selector: 'textarea' })).toBeNull()
   })
 
-  test('the view switched away and back, with no reload: the box comes back on its own line with its words, never open and empty', async () => {
-    const made = fakeApi()
-    /* A commit whose diff lists another file first, so the same file sits at another position in each view. */
-    const diff = made.api.diff
-    made.api.diff = async (url, view, sha) => ({ ...(await diff(url, view, sha)), ...(view === 'commit' ? { text: `${OTHER_FIRST}${COMMIT_PATCH}` } : {}) })
-    const view = render(<Screen host={host()} api={made.api} />)
-    await waitFor(() => expect(view.container.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
-    await screen.findByRole('region', { name: 'Your review' })
-    const boxes = () => [...view.container.querySelectorAll('textarea[id^="box-Comment on"]')] as HTMLTextAreaElement[]
-
-    fireEvent.click(screen.getByRole('button', { name: LINE }))
-    fireEvent.change(box(), { target: { value: 'Typed, then the view was switched.' } })
-    press('showing', FIRST)
-    await waitFor(() => expect(view.container.querySelector('[data-file="src/zero.ts"]')).toBeTruthy())
-    /* Away: no box on this diff, which is another diff. The words are still held. */
-    expect(boxes()).toEqual([])
-    expect(held()).toHaveLength(1)
-
-    press('showing', 'all')
-    await waitFor(() => expect(view.container.querySelector('[data-file="src/gone.ts"]')).toBeTruthy())
-    expect(boxes().map((one) => [one.id, one.value])).toEqual([[`box-${LINE}`, 'Typed, then the view was switched.']])
-    expect(screen.queryByTestId('kept-words')).toBeNull()
-  })
-
-  test('a write that was refused leaves the words in the box and held', async () => {
-    const made = fakeApi()
-    made.api.addComment = () => Promise.reject(new Error(PAGE_OLD))
-    const view = render(<Screen host={host()} api={made.api} />)
-    await waitFor(() => expect(view.container.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
-    await screen.findByRole('region', { name: 'Your review' })
-    fireEvent.click(screen.getByRole('button', { name: LINE }))
-    fireEvent.change(box(), { target: { value: 'Pressed on a stale page.' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
-    await screen.findByText(PAGE_OLD)
-    expect(box().value).toBe('Pressed on a stale page.')
-    expect(held()).toHaveLength(1)
-    await reload()
-    expect(box().value).toBe('Pressed on a stale page.')
-  })
-
-  test('a different project, or a different change, does not see them', async () => {
-    await opened()
-    fireEvent.click(screen.getByRole('button', { name: LINE }))
-    fireEvent.change(box(), { target: { value: 'For the thesis only.' } })
-    await reload({}, { projectPath: '/work/other' })
-    expect(screen.queryByLabelText(LINE, { selector: 'textarea' })).toBeNull()
-    expect(document.body.textContent).not.toContain('For the thesis only.')
-    expect(held('/work/other')).toEqual([])
-    /* Another change in the same project: the change is in the key. */
-    expect(held()[0]?.[0].startsWith(`${GH_URL}|`)).toBe(true)
-  })
-
-  test('a comment typed on a head that has since been pushed over is shown as kept words, not opened on today’s lines', async () => {
-    const older = '2222222222222222222222222222222222222222'
-    drafts.at(P).keep(`${GH_URL}|new:all:${older}:new:11:11:src/one.ts`, { base: '', text: 'About the old line 11.', aim: 'a comment on new line 11 of src/one.ts at 22222222' })
-    await opened()
-    expect(screen.queryByLabelText(LINE, { selector: 'textarea' })).toBeNull()
-    const kept = screen.getByTestId('kept-words')
-    expect(kept.textContent).toContain('About the old line 11.')
-    expect(kept.textContent).toContain('at 22222222')
-    fireEvent.click(within(kept).getByRole('button', { name: 'Discard' }))
-    expect(screen.queryByTestId('kept-words')).toBeNull()
-    expect(held()).toEqual([])
-  })
-
-  test('a rewording: restored open in the panel; and when the comment changed meanwhile it says so', async () => {
+  test('a rewording: restored open on its card; and when the point changed meanwhile it says so', async () => {
     await opened({ comments: [comment({ id: 'c-1', body: 'first words' })] })
-    const panel = () => within(screen.getByRole('region', { name: 'Your review' }))
-    fireEvent.click(panel().getByRole('button', { name: 'Edit' }))
-    const label = /Reword the comment on/
-    /* Opened and not changed is not a draft. */
+    fireEvent.click(within(card('c-1')).getByRole('button', { name: 'Edit' }))
+    const label = /Reword the point on/
     expect(held()).toEqual([])
-    fireEvent.change(panel().getByLabelText(label, { selector: 'textarea' }), { target: { value: 'better words' } })
-    expect(held()[0]).toEqual([`${GH_URL}|reword:c-1`, { base: 'first words', text: 'better words', aim: expect.stringContaining('a rewording of the comment on') }])
-
+    fireEvent.change(screen.getByLabelText(label, { selector: 'textarea' }), { target: { value: 'better words' } })
+    expect(held()[0]).toEqual([`${GH_URL}|reword:c-1`, { base: 'first words', text: 'better words', aim: expect.stringContaining('a rewording of the point on') }])
     await reload({ comments: [comment({ id: 'c-1', body: 'an agent reworded this' })] })
-    expect((panel().getByLabelText(label, { selector: 'textarea' }) as HTMLTextAreaElement).value).toBe('better words')
-    expect(panel().getByTestId('held-stale').textContent).toContain('an agent reworded this')
-
-    /* The comment is gone altogether: the words are shown, not dropped. */
-    await reload({ comments: [] })
-    expect(screen.getByTestId('kept-words').textContent).toContain('better words')
+    expect((screen.getByLabelText(label, { selector: 'textarea' }) as HTMLTextAreaElement).value).toBe('better words')
+    expect(screen.getByTestId('held-stale').textContent).toContain('an agent reworded this')
   })
 
   test('the summary: typed and not yet left → reload → in the box, still unsaved, and saved by the next blur', async () => {
@@ -777,18 +816,23 @@ describe('typed words are held across a reload, aimed at what they were typed on
     fireEvent.change(summary(), { target: { value: 'saved words, and more' } })
     expect(first.calls.verdicts).toEqual([])
     expect(held()[0]).toEqual([`${GH_URL}|summary`, { base: 'saved words', text: 'saved words, and more', aim: 'the review’s summary' }])
-
     const second = await reload({ summary: 'saved words' })
     expect(summary().value).toBe('saved words, and more')
-    expect(screen.queryByTestId('summary-stale')).toBeNull()
     fireEvent.blur(summary())
     await waitFor(() => expect(second.calls.verdicts).toEqual([[undefined, 'saved words, and more']]))
     await waitFor(() => expect(held()).toEqual([]))
+  })
 
-    /* Saved: a reload restores nothing, and shows what the server holds. */
-    await reload({ summary: 'saved words, and more' })
-    expect(summary().value).toBe('saved words, and more')
-    expect(held()).toEqual([])
+  test('a write that was refused leaves the words in the box and held', async () => {
+    const made = fakeApi()
+    made.api.addComment = () => Promise.reject(new Error(PAGE_OLD))
+    render(<Screen host={host({ location: { change: 'gh#46', path: 'src/one.ts', line: 12, side: 'new', intent: 'comment', at: 'x' } })} api={made.api} />)
+    const box = (await screen.findByLabelText('New point at src/one.ts:12', { selector: 'textarea' })) as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'Do not lose this.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add to review' }))
+    await screen.findByText(PAGE_OLD)
+    expect(box.value).toBe('Do not lose this.')
+    expect(held()[0]?.[1]).toMatchObject({ text: 'Do not lose this.' })
   })
 
   test('a held summary does not silently replace one the server has changed since: it says so', async () => {
@@ -797,30 +841,29 @@ describe('typed words are held across a reload, aimed at what they were typed on
     expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe('my unsaved words')
     expect(screen.getByTestId('summary-stale').textContent).toContain('an agent wrote this summary')
   })
+
+  test('a different project does not see them', async () => {
+    drafts.at('/somewhere/else').keep(`${GH_URL}|summary`, { base: '', text: 'not yours', aim: 'the review’s summary' })
+    await opened()
+    expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe('')
+  })
 })
 
 describe('the header: what the host draws in the container’s own row', () => {
-  test('typing in a comment declares nothing again', async () => {
-    await opened()
-    fireEvent.click(await screen.findByRole('button', { name: 'Comment on new line 12 of src/one.ts' }))
+  test('typing in a point declares nothing again', async () => {
+    await opened({ comments: [comment({ id: 'c-1' })] })
+    fireEvent.click(within(card('c-1')).getByRole('button', { name: 'Edit' }))
     const before = declared.length
-    const box = screen.getByLabelText('Comment on new line 12 of src/one.ts', { selector: 'textarea' })
+    const box = screen.getByLabelText(/Reword the point on/, { selector: 'textarea' })
     fireEvent.change(box, { target: { value: 'a' } })
     fireEvent.change(box, { target: { value: 'ab' } })
-    fireEvent.change(box, { target: { value: 'abc' } })
     expect(declared.length).toBe(before)
   })
 
-  test('a commit that is no longer the change’s is refused, in a sentence; a real one is taken', async () => {
-    await opened()
-    expect(String(press('showing', 'deadbeef'))).toContain('no longer')
-    expect(press('showing', HEAD)).toBe(true)
-    await waitFor(() => expect(header('showing')).toMatchObject({ value: HEAD }))
-  })
-
-  test('the toolbar rows are gone: no select and no row of buttons in the page', async () => {
-    const { container } = await opened()
-    expect(container.querySelector('select')).toBeNull()
+  test('the view switch counts the draft points, and refuses what it does not have', async () => {
+    await opened({ comments: [comment({ id: 'c-1' }), comment({ id: 'c-2', line: 12 })] })
+    expect(optionsOf('showing')).toEqual(['Review · 2 draft points', 'Before / after'])
+    expect(String(press('showing', HEAD))).toContain('review or the Before / after')
   })
 
   test('the page’s own control is there until a host has pressed one, and not after', async () => {
@@ -839,6 +882,7 @@ describe('the header: what the host draws in the container’s own row', () => {
     expect(declared.at(-1)).toEqual([])
   })
 })
+
 
 describe('a review run, on the page', () => {
   const META = {
@@ -867,9 +911,8 @@ describe('a review run, on the page', () => {
 
   test('a point says its severity, ruling, reason, evidence and challenge, in words', async () => {
     await opened({ comments: [comment({ id: 'c-1', by: 'agent', meta: META })] })
-    const panel = within(screen.getByRole('region', { name: 'Your review' }))
-    const point = panel.getByTestId('point')
-    expect(point.textContent).toContain('Blocking')
+    expect(card('c-1').textContent).toContain('Blocking')
+    const point = within(card('c-1')).getByTestId('point')
     expect(point.textContent).toContain('Required')
     expect(point.textContent).toContain('It breaks the parser.')
     expect(point.textContent).toContain('It may be deliberate.')
@@ -933,11 +976,11 @@ describe('the Before / after view', () => {
     expect(refused.textContent).toContain('evil.example')
     expect(refused.querySelector('a')).toBeNull()
     expect(refused.querySelector('img')).toBeNull()
-    /* No diff is drawn under it. */
-    expect(document.querySelector('[data-file="src/one.ts"]')).toBeNull()
+    /* The review is not drawn under it. */
+    expect(document.querySelector('[aria-label="The review"]')).toBeNull()
     await waitFor(() => expect(header('showing')).toMatchObject({ value: 'shots' }))
     /* And back. */
-    expect(press('showing', 'all')).toBe(true)
-    await waitFor(() => expect(document.querySelector('[data-file="src/one.ts"]')).toBeTruthy())
+    expect(press('showing', 'review')).toBe(true)
+    await waitFor(() => expect(document.querySelector('[aria-label="The review"]')).toBeTruthy())
   })
 })

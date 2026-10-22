@@ -2,17 +2,35 @@ import { resolve } from 'node:path'
 
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { doors, serves } from 'kehikot-module-protocol/serve'
-import { defineConfig } from 'vite'
+import { doors, originFor, serves } from 'kehikot-module-protocol/serve'
+import { defineConfig, type Plugin } from 'vite'
 
 import { BUILD, MANIFEST, TICKET, answer } from './doors.ts'
 import { factoryDoor } from './factory/door.ts'
-import { ID, PREFERRED_PORT } from './manifest.ts'
+import { ID, PREFERRED_PORT, servingAt } from './manifest.ts'
+import { isSkillPath } from './skills.ts'
+
+/**
+ * The port this process really ended up on is not knowable here: `serves()` prefers `$PORT`, then
+ * `PREFERRED_PORT`, and moves when that is taken. The skills name the origin they are on, so it is
+ * corrected once the server is listening.
+ */
+function listening(): Plugin {
+  return {
+    name: 'review-listening',
+    configureServer(server) {
+      server.httpServer?.once('listening', () => {
+        const address = server.httpServer?.address()
+        if (address && typeof address === 'object') servingAt(originFor(address.port))
+      })
+    },
+  }
+}
 
 /**
  * Every door, served by the process that serves the page, through the protocol's `doors()`: the
  * manifest, `/app` (generated, with the write ticket and the build printed into it), and
- * `/healthz`, `/mcp` and `/api/*` through `answer` in doors.ts. A module is ONE ORIGIN: the host
+ * `/healthz`, `/mcp`, `/api/*` and the skills (`/kehikot/skills/*.md`) through `answer` in doors.ts. A module is ONE ORIGIN: the host
  * refuses an `entry` anywhere else, and a store on a second port would make the page's own `/api`
  * calls cross-origin. See the protocol's docs/module-plumbing.md.
  *
@@ -34,11 +52,19 @@ export default defineConfig({
   base: './',
   plugins: [
     serves({ id: ID, prefer: PREFERRED_PORT }),
+    listening(),
     /* Before `doors()`: Factory's send needs its key header, which `answer` is not given. It
        makes the key on the first start. Without the header the request goes on to `doors()`,
        which answers it 404. See factory/door.ts. */
     factoryDoor(),
-    doors({ manifest: MANIFEST, answer, build: BUILD, page: { title: 'Review', ticket: TICKET } }),
+    doors({
+      manifest: MANIFEST,
+      answer,
+      build: BUILD,
+      page: { title: 'Review', ticket: TICKET },
+      /* The skills' SKILL.md files (`/kehikot/skills/<name>.md`) are answered by `answer` too. */
+      ours: (path) => path === '/healthz' || path === '/mcp' || path.startsWith('/api/') || isSkillPath(path),
+    }),
     react(),
     tailwindcss(),
   ],

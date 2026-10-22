@@ -1,24 +1,23 @@
 import { LIMITS, type HeaderItemInput } from 'kehikot-module-protocol'
 
-import { short } from '../review/shape.ts'
-
 /**
  * What this page declares for the container's header (`kehikot.header`).
  *
  * The host draws these in its View menu, in the row a container already has, so
- * this page spends no row of its own on "which changes to show" or on "which
- * change to review". A pure function of what the page knows: a keystroke in a
+ * this page spends no row of its own on "the review or the pictures" or on
+ * "which change to review". A pure function of what the page knows: a keystroke in a
  * comment changes nothing here, so typing declares nothing.
  *
  * ## Ids
  *
  * The change is `c<n>`, by its place in the selection as the page last drew it.
- * A commit is its own sha, and the whole change is `all`: a sha is stable while
- * the list of commits moves under it, which a position would not be.
+ * The views are `review` and `shots`. Review draws no diff: Source and Diff do,
+ * at the place a point's code reference names.
  */
 
-export const ALL = 'all'
-/** The Before / after view: the change's pictures, not a diff. */
+/** The review itself: the document. */
+export const DOCUMENT = 'review'
+/** The Before / after view: the change's pictures. */
 export const SHOTS = 'shots'
 
 /** A label no longer than a label may be, cut with an ellipsis. Never empty. */
@@ -27,26 +26,14 @@ export function cut(text: string, max: number = LIMITS.HEADER_LABEL): string {
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat
 }
 
-const counted = (n: number): string => (n ? ` · ${n} ${n === 1 ? 'comment' : 'comments'}` : '')
-
-export interface HeaderCommit {
-  sha: string
-  title: string
-  /** Draft comments waiting in this commit's view. */
-  waiting: number
-}
-
 export interface HeaderState {
   /** The selected refs that are changes, when there is more than one to choose between; else empty. */
   changes: readonly string[]
   change: string | null
-  commits: readonly HeaderCommit[]
-  /** Draft comments waiting in the whole-change view. */
-  waitingAll: number
-  /** Which view is on: `all`, a commit's sha, or `shots`. */
-  showing: string
-  /** The forge listed more commits than are kept. */
-  more: boolean
+  /** Points not yet sent. */
+  waiting: number
+  /** Which view is on: the review, or the Before / after pictures. */
+  showing: typeof DOCUMENT | typeof SHOTS
 }
 
 export function headerOf(state: HeaderState): HeaderItemInput[] {
@@ -67,21 +54,15 @@ export function headerOf(state: HeaderState): HeaderItemInput[] {
     }
   }
 
-  /* As many as a switch may hold beside "All changes" and "Before / after": the newest commits, and the picked one wherever it is. */
-  const room = LIMITS.HEADER_OPTIONS - 2
-  let commits = state.commits.slice(-room)
-  const picked = state.commits.find((one) => one.sha === state.showing)
-  if (picked && !commits.includes(picked)) commits = [picked, ...commits.slice(1)]
   items.push({
     kind: 'switch',
     id: 'showing',
-    label: state.more || state.commits.length > room ? 'Showing · not every commit is listed' : 'Showing',
+    label: 'Showing',
     icon: 'git-commit-horizontal',
     agents: true,
-    value: state.showing === ALL || state.showing === SHOTS || commits.some((one) => one.sha === state.showing) ? state.showing : ALL,
+    value: state.showing,
     options: [
-      { id: ALL, label: cut(`All changes${counted(state.waitingAll)}`) },
-      ...commits.map((one) => ({ id: one.sha, label: cut(`${short(one.sha)} ${one.title}${counted(one.waiting)}`) })),
+      { id: DOCUMENT, label: cut(`Review${state.waiting ? ` · ${state.waiting} ${state.waiting === 1 ? 'draft point' : 'draft points'}` : ''}`) },
       { id: SHOTS, label: 'Before / after' },
     ],
   })

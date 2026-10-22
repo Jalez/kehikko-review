@@ -66,8 +66,8 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
 
   return (
     /* `min-w-0` and `overflow-x-hidden` on the one scroller: nothing on this
-       page may make it scroll sideways. A diff that is wider than the frame
-       scrolls inside its own file, and everything else wraps or truncates. */
+       page may make it scroll sideways. Quoted code scrolls inside its own
+       box, and everything else wraps or truncates. */
     <main className="flex h-screen min-w-0 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2 text-sm">
       {cover ? (
         <Cover
@@ -83,7 +83,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
       {host.where === 'hosted' && !host.selection.length ? (
         <Note>
           Nothing is selected. Select a pull request or merge request anywhere on the canvas — in References, Journeys or any module that
-          lists them — and its diff and your review of it appear here.
+          lists them — and your review of it appears here.
         </Note>
       ) : null}
 
@@ -108,6 +108,8 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
           api={api}
           round={round}
           chrome={{ header: host.header, presses: host.presses, drawn: host.where === 'hosted' && Boolean(host.pressed), changes, onChange: setPicked }}
+          location={host.location ?? null}
+          {...(host.locate ? { locate: host.locate } : {})}
         />
       ) : null}
 
@@ -121,8 +123,8 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
 
 /** The second line under the unhosted cover: what this module is, and how a change gets here. */
 export const UNHOSTED =
-  'Review is a module for a Kehikot canvas: place it there, select a pull request or merge request, and it is shown here to be '
-  + 'reviewed line by line.'
+  'Review is a module for a Kehikot canvas: place it there, select a pull request or merge request, and its review is written '
+  + 'here — with Source and Diff beside it to show the lines each point is about.'
 
 function Note({ children }: { children: React.ReactNode }) {
   return <p className="text-[0.7rem] leading-4 text-muted-foreground">{children}</p>

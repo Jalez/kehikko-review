@@ -1,13 +1,15 @@
 import type { Forge, Target } from '../forge/locate.ts'
 
 /**
- * What a draft review IS, as it sits on disk: one JSON file per change.
+ * What a review IS: one Markdown file per change (`review/md.ts` writes and reads it; a JSON
+ * draft from before 1.1.0 is read once and moved over).
  *
  * Types and bounds only — no I/O and no node import, because the page reads
  * this file too — so the page, the doors, the anchoring
  * rule and the send plan all mean the same thing by "a comment".
  */
 
+/** The version of the JSON drafts this module wrote before 1.1.0. Read once, to move them into Markdown. */
 export const DRAFT_VERSION = 1
 
 /**
@@ -166,6 +168,91 @@ export interface Comment {
   sent?: Sent
   /** Present on a point a review run wrote. */
   meta?: Meta
+  /**
+   * When the person kept an agent's point (pressed Keep, or edited its words). A kept point is the
+   * person's decision: the person's send may post it, and no agent may change or drop it.
+   */
+  kept?: string
+  /** When the person marked a sent point resolved: the author dealt with it. */
+  resolved?: string
+}
+
+/** Where a point stands, in one word: as the review file says it and the page shows it. */
+export type PointState = 'draft' | 'kept' | 'sent' | 'resolved'
+
+export const stateOf = (comment: Pick<Comment, 'kept' | 'sent' | 'resolved'>): PointState =>
+  comment.resolved ? 'resolved' : comment.sent ? 'sent' : comment.kept ? 'kept' : 'draft'
+
+/* ------------------------------------------------------------------ *
+ * Evidence collected beside the review: screenshots, run logs, test output
+ * ------------------------------------------------------------------ */
+
+export const PROOF_KINDS = ['screenshot', 'log', 'test'] as const
+export type ProofKind = (typeof PROOF_KINDS)[number]
+/** How many pieces of evidence one review holds. */
+export const MAX_PROOFS = 60
+export const MAX_CAPTION = 300
+/** A screenshot's bytes, at most. */
+export const MAX_PICTURE_BYTES = 10_000_000
+/** A log's or test output's bytes, at most. */
+export const MAX_LOG_BYTES = 1_000_000
+/** The file extensions evidence is kept under. A picture's is what its bytes are, never what it was called. */
+export const PROOF_EXTENSIONS = ['png', 'jpg', 'gif', 'webp', 'txt'] as const
+export type ProofExtension = (typeof PROOF_EXTENSIONS)[number]
+
+/**
+ * One piece of evidence: a file kept beside the review, under `.kehikot/review/<key>/`, with what it
+ * shows. `file` is only ever `<id>.<extension>`, made by this module, never a name that arrived.
+ */
+export interface Proof {
+  id: string
+  kind: ProofKind
+  caption: string
+  file: string
+  bytes: number
+  /** The point it supports, when it supports one. */
+  point?: string
+  /** The review run that collected it, when a run did. */
+  run?: string
+  by: By
+  at: string
+}
+
+/** A proof's file name: its id and an extension this module chose. */
+export const PROOF_FILE = /^e-[0-9a-f]{12}\.(png|jpg|gif|webp|txt)$/
+export const PROOF_ID = /^e-[0-9a-f]{12}$/
+
+/* ------------------------------------------------------------------ *
+ * Replies, for a change the person authored: to the review comments they received
+ * ------------------------------------------------------------------ */
+
+/**
+ * A thread on the forge, by what this module needs to answer it:
+ * `gh-comment:<id>` a GitHub review comment's thread (answered under it);
+ * `gh-conversation` the pull request's conversation (answered as a new comment there);
+ * `gl-discussion:<id>` a GitLab discussion (answered in it).
+ */
+export const THREAD = /^(gh-comment:[0-9]{1,20}|gh-conversation|gl-discussion:[0-9a-f]{8,64})$/
+export const MAX_SAID = 4000
+export const MAX_REPLIES = 100
+
+export interface ReplyDraft {
+  id: string
+  thread: string
+  /** Where the thread is: `path:line`, or `the conversation`. */
+  where: string
+  /** Who wrote what is answered. */
+  from: string
+  /** Their words, as the forge had them, bounded: what the reply answers. */
+  said: string
+  /** The reply, as it would be posted. */
+  body: string
+  /** What to change in the code for this thread. For the person; never posted. */
+  todo: string
+  by: By
+  at: string
+  editedAt?: string
+  sent?: { at: string; url?: string }
 }
 
 export interface SentRecord {
@@ -204,6 +291,12 @@ export interface Draft {
   verdictBy?: By
   /** The latest review run's proposed summary and verdict. */
   proposal?: Proposal
+  /** The head the forge named the last time something was written against it. */
+  head?: string
+  /** Screenshots, run logs and test output kept beside the review. */
+  evidence: Proof[]
+  /** Replies drafted to the review comments the person received on their own change. */
+  replies: ReplyDraft[]
 }
 
 /** The address of a change as a tracker's own URL, rebuilt from the parts so it never carries a query or a fragment. */

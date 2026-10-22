@@ -24,11 +24,12 @@ describe('the manifest', () => {
     expect(MANIFEST.mcp?.url).toBe('/mcp')
   })
 
-  test('asks a host for the tracker reading and nothing else, and says what it reacts to', () => {
+  test('asks a host for the tracker reading and for pointing at code, and nothing else, and says what it reacts to', () => {
     /* Reaching GitHub and GitLab is not a capability: this module's own server
-       runs the person's `gh` and `glab`. */
-    expect(MANIFEST.declares.uses).toEqual(['trackers:read'])
-    expect(MANIFEST.reacts).toEqual(['selection', 'tracker'])
+       runs the person's `gh` and `glab`. `location:set` is a point's code reference. */
+    expect(MANIFEST.declares.uses).toEqual(['trackers:read', 'location:set'])
+    expect(MANIFEST.reacts).toEqual(['selection', 'tracker', 'location'])
+    expect(MANIFEST.dataVersion).toBe(2)
     expect(MANIFEST.modes).toEqual([{ id: 'review', label: 'Review', scope: 'epic' }])
   })
 
@@ -36,6 +37,11 @@ describe('the manifest', () => {
     expect(MANIFEST.guidance).toContain('DRAFT')
     expect(MANIFEST.guidance).toContain('only the person sends')
     expect(MANIFEST.mcp?.about).toContain('nothing here posts')
+  })
+
+  test('declares its three skills, none of them bound to another module', () => {
+    expect(MANIFEST.declares.skills?.map((one) => one.name)).toEqual(['review-pass', 'review-point', 'review-reply'])
+    for (const skill of MANIFEST.declares.skills ?? []) expect(skill.needs).toBeUndefined()
   })
 
   test('prefers a port on the ten-apart grid', () => {

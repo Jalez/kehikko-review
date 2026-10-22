@@ -67,8 +67,8 @@ describe('the store', () => {
 
     const read = readDraftFor(dir, gh)
     expect(read.ok && read.value.comments.map((c) => c.id)).toEqual(['c-1'])
-    expect(existsSync(join(dir, '.kehikot', 'review', `${keyOf(gh)}.json`))).toBe(true)
-    expect(existsSync(join(dir, '.kehikot', 'review', `${keyOf(gl)}.json`))).toBe(true)
+    expect(existsSync(join(dir, '.kehikot', 'review', `${keyOf(gh)}.md`))).toBe(true)
+    expect(existsSync(join(dir, '.kehikot', 'review', `${keyOf(gl)}.md`))).toBe(true)
 
     const listed = listDrafts(dir)
     expect(listed.ok && listed.value.map((d) => d.change.url).sort()).toEqual([GH_URL, GL_URL].sort())
@@ -111,11 +111,11 @@ describe('the store', () => {
   test('a file that is not a draft is an error to read and is left alone', () => {
     const dir = project('garbage')
     changeDraft(dir, gh, (draft) => add(draft, 'c-1'))
-    const file = join(dir, '.kehikot', 'review', `${keyOf(gh)}.json`)
-    writeFileSync(file, '{ not json')
+    const file = join(dir, '.kehikot', 'review', `${keyOf(gh)}.md`)
+    writeFileSync(file, '# not a review\n')
     expect(readDraftFor(dir, gh).ok).toBe(false)
     expect(changeDraft(dir, gh, (draft) => add(draft, 'c-2')).ok).toBe(false)
-    expect(readFileSync(file, 'utf8')).toBe('{ not json')
+    expect(readFileSync(file, 'utf8')).toBe('# not a review\n')
   })
 
   test('a file holding another change’s draft under this change’s name is not used', () => {
@@ -182,7 +182,7 @@ describe('what may happen to a draft', () => {
     if (!one.ok) throw new Error(one.error)
     const reworded = rewordComment(one.draft, 'c-1', 'better', 'later')
     expect(reworded.ok && reworded.draft.comments[0]).toMatchObject({ body: 'better', editedAt: 'later', line: 11, path: 'src/one.ts' })
-    expect(dropComment(one.draft, 'c-1')).toEqual({ ok: true, draft: base })
+    expect(dropComment(one.draft, 'c-1')).toEqual({ ok: true, draft: base, gone: [] })
     expect(dropComment(one.draft, 'c-nope').ok).toBe(false)
     expect(rewordComment(one.draft, { evil: true }, 'x', 'later').ok).toBe(false)
   })

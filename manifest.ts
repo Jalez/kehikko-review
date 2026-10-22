@@ -1,25 +1,21 @@
 import { MANIFEST_KIND, PROTOCOL, manifestSchema, type Manifest } from 'kehikot-module-protocol'
 import pkg from './package.json'
 
-export const ID = 'kehikot.review'
+import { PREFERRED_PORT } from './port.ts'
+import { serveFrom, skillDeclarations } from './skills.ts'
+
+export { PREFERRED_PORT }
+
+import { ID } from './id.ts'
+
+export { ID }
 /** The module's version: package.json's, the one place it is written. A release is tagged with it. */
 export const VERSION: string = pkg.version
 
 /**
- * Where this module would like to answer. Said once, here, and read by
- * `vite.config.ts` and `register.ts`. Modules on this machine sit ten apart
- * from 7820 up, so a drift up from one never lands on a neighbour's number;
- * 7960 is History's and 7970–7990 are taken, so this is the next free ten.
- *
- * A PREFERENCE and not a promise: if something holds it, `serves()` moves to
- * the next free port and rewrites the registration to match.
- */
-export const PREFERRED_PORT = 8000
-
-/**
  * What this app says about itself when a host asks.
  *
- * ## `trackers:read`, and only that
+ * ## `trackers:read` and `location:set`
  *
  * A selection is refs and nothing else — `['gh#46']`, `['!3105']`. A ref does
  * not say whether it is an issue or a change (GitHub numbers both in one
@@ -48,7 +44,14 @@ export const PREFERRED_PORT = 8000
  *   tracker reading carries both, for every ref the project names and not only
  *   those of an epic with an imported state file, so there is nothing left for
  *   `live.get` to add here.
- * - **`selection:set`.** This app REACTS to a selection and never makes one.
+ * `location:set` (2.13.0): a point's code reference is a place in the change's code, and pressing
+ * it says so to the kehikko (`location.set`, intent `show`), so Source opens the file at that line and
+ * Diff scrolls there. Review no longer draws a diff of its own. It also reacts to `location`: when
+ * somebody asks for a comment at a place (intent `comment`), the page opens a new point there.
+ *
+ * - **`selection:set`.** This app REACTS to a selection and never makes one. A point's code
+ *   reference is always in the change on the page, which is always one of the selected changes, so
+ *   there is nothing to select before pointing.
  *   A module whose job is to answer a question about what is picked has no
  *   business changing what every other container is looking at.
  * - **`state:keep`.** What is worth keeping is the draft, and that is in the
@@ -108,9 +111,9 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   version: VERSION,
   /* The format of what this module keeps under `.kehikot/`. Raise it only in
      the release that first writes data an older release cannot read. */
-  dataVersion: 1,
+  dataVersion: 2,
   summary:
-    'Review the selected pull or merge request: comment on exact lines of the whole change or of one commit, then send it all as one review with a verdict.',
+    'The review of the selected pull or merge request as one document: verdict, summary, points on exact lines, evidence and replies. You send it.',
   /* Where a host files this module in its list, most fitting first. */
   tags: ['review', 'code'],
   /**
@@ -119,15 +122,12 @@ export const MANIFEST: Manifest = manifestSchema.parse({
    * arrived and has never seen this app.
    */
   guidance:
-    'Review is on this canvas: a person reviews a pull or merge request here, and you can help by drafting. '
-    + 'Call `read_change` with the project path and the change’s URL to see its commits, then `read_diff` for the '
-    + 'lines; the diff prints an old and a new line number beside every line, and those are what you cite. '
-    + 'Use `add_comment` to put a draft comment on a line — give `commit` when you mean a line of one commit’s own '
-    + 'diff, leave it out for the whole change — and `set_verdict` to propose a summary and a verdict. '
-    + 'What the person wrote is theirs: you cannot reword, remove or replace it. '
-    + 'Everything you write is a DRAFT in the project, marked as written by an agent. Nothing you do here is '
-    + 'posted to GitHub or GitLab: only the person sends a review, from the page, after reading it. So write '
-    + 'comments you would stand behind if they were sent as they are, and do not post review comments with '
+    'Review is on this canvas: a person reviews a pull or merge request here, as one document, and you can help by drafting. '
+    + '`read_focus` says which change is open and where somebody is pointing. `read_change`, then `read_diff`: it prints '
+    + 'an old and a new line number beside every line, and those are what you cite. `add_comment` drafts a point on a '
+    + 'line (give `commit` only for a line of one commit’s own diff), `add_evidence` keeps a screenshot, log or test output '
+    + 'beside it, `set_verdict` proposes a summary and verdict. What the person wrote or kept is theirs: you cannot change '
+    + 'it. Everything you write is a DRAFT; only the person sends, from the page. Do not post review comments with '
     + '`gh` or `glab` yourself when a person is reviewing here.',
   entry: '/app',
   modes: [{ id: 'review', label: 'Review', scope: 'epic' }],
@@ -135,8 +135,8 @@ export const MANIFEST: Manifest = manifestSchema.parse({
     url: '/mcp',
     transport: 'http',
     about:
-      'Read a pull or merge request commit by commit and draft a review of it: comments on exact lines, a summary, a '
-      + 'proposed verdict. Drafts stay in the project; nothing here posts to a tracker.',
+      'Draft a review of a pull or merge request: points on exact lines, evidence, a summary, a verdict, replies. A Markdown '
+      + 'file in the project; nothing here posts to a tracker.',
   },
   extensions: { emits: [], consumes: [] },
   /**
@@ -148,16 +148,25 @@ export const MANIFEST: Manifest = manifestSchema.parse({
    * A description, not a request: the context arrives whether or not this line
    * exists.
    */
-  reacts: ['selection', 'tracker'],
+  reacts: ['selection', 'tracker', 'location'],
   /* Why this module has nothing to narrow by the parts of an epic: it has no list. It shows one
      thing, the change somebody selected, with the review they are writing of it — and that is in
      their hands whatever is picked. */
   partless: 'Shows the review of the one change a person selected, which is always in hand.',
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,
-    uses: ['trackers:read'],
+    uses: ['trackers:read', 'location:set'],
     storage: true,
     prompt: false,
+    /* The skills this module offers, for the origin it is on (`skills.ts`). */
+    skills: skillDeclarations(),
   },
   health: '/healthz',
 })
+
+/** Say the origin this process really serves on, once it is listening: the skills' text and version follow. */
+export function servingAt(origin: string): void {
+  serveFrom(origin)
+  const skills = MANIFEST.declares?.skills
+  if (skills) skills.splice(0, skills.length, ...skillDeclarations())
+}
