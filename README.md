@@ -1,7 +1,10 @@
 # Review
 
-Review the selected pull or merge request: comment on exact lines of the whole
-change or of one commit, then send it all as one review with a verdict.
+The review of the selected pull or merge request, as one document: a verdict
+and a summary, points on exact lines with their evidence, the screenshots, logs
+and test output collected for them, and replies to the comments you received —
+sent once, by you. With the review skills `/review-pass`, `/review-point` and
+`/review-reply`, and the MCP tools they use.
 
 An app: its own page, its own port, its own store. A Kehikot host may frame it,
 and then it knows which change is selected.
@@ -15,12 +18,30 @@ bun test && bun run typecheck
 ## What it is
 
 One container. Something else on the canvas — References, Journeys, anything —
-selects a pull request or merge request; this shows its diff, with every line a
-place a comment can go, and a panel holding the review being written. A person
-writes comments on the page. An agent can write them too, over MCP. **Only the
-person sends**, and only after reading exactly what will be posted — except a
-review run Factory sends for a two-way change that touches nothing people see,
-through a door of its own (see "Factory's send").
+selects a pull request or merge request; this shows **the review of it**, read
+top to bottom:
+
+1. **Verdict and summary**, with a review run's proposal beside them and its
+   "To get this approved:".
+2. **Points**, each a card: its code reference (`src/app.ts:40-42@f982d895`),
+   who wrote it and where it stands (draft, kept, sent, resolved), the quoted
+   code, its words, severity, evidence, the challenge and the ruling, the
+   screenshots and logs attached to it, and Edit, Keep and Remove.
+3. **Evidence**: screenshots, run logs and test output kept beside the review.
+4. **Replies**, on a change you authored: one per thread you received.
+5. **Send**, in two presses.
+
+Review draws no diff. **Source** shows the file at the change's head, and
+**Diff** shows the old and the new — at the place a point names (see "Source
+and Diff"). The server still checks every point against the change's real diff
+when it is written.
+
+A person writes points on the page. An agent can write them too, over MCP, and
+Review provides the skills that make it write them well (see "The review
+skills"). **Only the person sends**, only what they kept, and only after reading
+exactly what will be posted — except a review run Factory sends for a two-way
+change that touches nothing people see, through a door of its own (see
+"Factory's send").
 
 It holds no token. Everything it reads and everything it posts goes through
 `gh` or `glab` on this machine, run from this app's own server with no shell,
@@ -72,42 +93,193 @@ of the lines as `quote`.
 Three consequences worth knowing:
 
 - A range that is entirely unchanged context is recorded on the **new** side
-  whichever gutter was pressed. The lines are identical, and a tracker can place
+  whichever side it was asked on. The lines are identical, and a tracker can place
   a new-side comment where it often cannot place an old-side one. An old-side
   anchor is therefore always about something that was removed.
 - A comment is **never moved**. If the change is pushed to, a whole-change
-  comment written against the old head keeps its commit; it is no longer drawn
-  on today's lines (they are other lines), and the review panel marks it as
-  written against an older commit. It is sent against the commit it was written
+  comment written against the old head keeps its commit and its code reference,
+  and its card says it was written against an older commit. It is sent against the commit it was written
   on.
 - A whole-change comment aimed at a head the change has already moved past is
   refused when it is written, not re-aimed.
 
-On the page: press a line number to comment on that line; shift-press another
-number in the same column of the same file to cover a range.
+On the page a point is written at a place: the one somebody asked for a comment
+at in Source or Diff ("New point at src/app.ts:42"), or a file and lines typed
+after **New point…**. Either way it is a line of the whole change at its head.
 
-## The draft
+## The review file
 
-One JSON file per change, inside the project:
-`<project>/.kehikot/review/<key>.json`. The key is a readable slug of the
-repository plus eight hex characters of a hash over the exact forge, host,
-repository and number — the slug is for a person looking in the folder, the
-hash is what stops `a.b/c` and `a-b/c` from sharing a file.
+One Markdown file per change, inside the project:
+`<project>/.kehikot/review/<key>.md`, with its evidence in
+`<project>/.kehikot/review/<key>/`. The key is a readable slug of the repository
+plus eight hex characters of a hash over the exact forge, host, repository and
+number — the slug is for a person looking in the folder, the hash is what stops
+`a.b/c` and `a-b/c` from sharing a file.
 
-The page re-reads the draft when the window regains focus and every twenty
-seconds, so a comment an agent adds appears without a reload. Bounds: 10,000
-characters a comment, 20,000 the summary, 200 unsent comments, 200 lines a
-range.
+It is the source of truth, written to be read and to diff well in git, and read
+back by a strict reader (`review/md.ts`): writing a review and reading it back
+gives the same review, and writing that again gives the same bytes. A file the
+reader did not write is refused with the line it stopped at, and nothing is
+written over it.
+
+````markdown
+---
+review: 1
+change: https://github.com/o/r/pull/46
+head: f982d895148c2dd49f71ccbaa31ee0d829e8ae8f
+verdict: request-changes
+verdict-by: person
+door: two-way
+uiux: no
+status: draft
+---
+
+# Review of o/r#46
+
+## Summary
+
+```text summary
+One thing blocks this; the rest reads well.
+```
+
+### Proposed by run review-pass
+
+- Verdict: request-changes
+- Head: f982d895148c2dd49f71ccbaa31ee0d829e8ae8f
+- At: 2026-10-22T10:00:00.000Z
+
+```text proposal
+The parser drops the last line.
+```
+
+To get this approved:
+
+1. Keep the last line in src/parse.ts:40-42.
+
+## Points
+
+### c-1a2b3c4d5e6f
+
+- Code: src/parse.ts:40-42@f982d895148c2dd49f71ccbaa31ee0d829e8ae8f
+- Side: new
+- Diff: whole change
+- By: agent
+- At: 2026-10-22T10:00:00.000Z
+- State: kept
+- Kept: 2026-10-22T10:05:00.000Z
+- Severity: blocking
+- Ruling: required
+- Reason: Every file without a final newline loses a line.
+- Run: review-pass
+- Read at: f982d895148c2dd49f71ccbaa31ee0d829e8ae8f
+- Evidence: test test/parse.test.ts:12
+- Challenge: Files without a final newline are rare. They are not: the fixtures have three.
+
+```text quote
+  const lines = text.split('\n').slice(0, -1)
+```
+
+```text body
+This drops the last line when the file has no final newline. Keep it: …
+```
+
+## Evidence
+
+### e-0123456789ab
+
+- Kind: test
+- Caption: bun test, before the fix
+- File: e-0123456789ab.txt
+- Size: 812 bytes
+- Point: c-1a2b3c4d5e6f
+- By: agent
+- At: 2026-10-22T10:01:00.000Z
+
+[e-0123456789ab.txt](gh-o-r-46-f11bf733/e-0123456789ab.txt)
+
+## Replies
+
+None.
+
+## Sent
+
+None.
+````
+
+- **Values** are `- Key: value` lines in a fixed order. A value that is not one
+  plain line (a newline, a backslash, a quote first, a space at an end, nothing)
+  is written as a JSON string, so nothing is guessed on the way back.
+- **Words** — a point's text, the quoted code, a summary, a reply — are fenced
+  blocks whose fence is longer than any run of backticks inside, so whatever the
+  words say they cannot close their own block.
+- **The code reference** is link-like: `path:line@commit`, or
+  `path:first-last@commit`.
+- **State** is `draft`, `kept`, `sent` or `resolved`, and agrees with the lines
+  under it (`Kept:`, `Sent:`, `Resolved:`), or the file is refused.
+
+The page re-reads the review when the window regains focus and every twenty
+seconds, so a point an agent adds appears without a reload. Bounds: 10,000
+characters a point, 20,000 the summary, 200 unsent points, 200 lines a range,
+60 pieces of evidence (a screenshot at most 10 MB, a log 1 MB).
+
+**The JSON drafts of 1.0.0** are moved over the first time they are read: read
+as before, written as Markdown, read back and compared; only when the two say
+exactly the same is `<key>.json` renamed to `<key>.json.bak`, which nothing reads
+again and which can be deleted once you are satisfied. If they differ, nothing is
+written and the JSON stays as it was.
+
+## Source and Diff
+
+A point's code reference is a place in the change's code (protocol 2.13.0,
+`location:set`). Pressing it calls `location.set` with intent `show` — the change
+as the canvas selection spells it (`gh#46`), the file, the first and last line,
+the side, and the commit the lines are counted at (the head for a new-side line
+of the whole change; none for a removed line, which counts on the base) — and
+Source opens the file there while Diff scrolls to it. The change on the page is
+always one of the selected changes, so there is nothing to select first; a press
+the host did not take says why, on the card.
+
+The other way round, Review reacts to `context.location`: when somebody asks for
+a comment at a place in the change on the page (intent `comment`), it opens
+"New point at path:line" with that place, once per ask (`at` is new on every
+ask), never for its own pointing. The page also tells its own server what it has
+open and where somebody points, in memory, for an agent's `read_focus`.
+
+## The review skills
+
+Review provides the skills a proper review needs (`declares.skills`, served at
+`/kehikot/skills/<name>.md` with this module's origin filled in, installed from
+Kehikot's Skills window). Each is `disable-model-invocation: true` — only a person
+runs it, by typing it — and its `allowed-tools` names exactly the Review tools it
+calls: no shell, no `gh`, no `glab`, no file writes. None of them can send.
+
+| skill | what it does | may call |
+| --- | --- | --- |
+| `/review-pass [ref]` | One careful single-agent review of the picked change, by the rules of `/review-factory`: anchored, sourced, short, plain; one issue one point; its own strongest challenge and ruling on each; every checklist item answered; the path to success; approves when nothing blocks. Writes points (`run: review-pass`), evidence and a proposal. | `read_focus`, `read_change`, `read_diff`, `read_review`, `read_review_md`, `add_comment`, `add_evidence`, `propose_review`, `drop_run_comments` |
+| `/review-point [path:line] [about]` | ONE well-sourced point at the place somebody is pointing (from `read_focus`) or the one given. | `read_focus`, `read_diff`, `read_review`, `add_comment` |
+| `/review-reply [ref]` | For a change you authored: a reply per thread you received, and what to change. You post them from the page. | `read_focus`, `read_change`, `read_diff`, `read_review`, `read_threads`, `draft_reply` |
+
+**`needs`: none.** None of the three needs another module on the kehikko:
+Source and Diff are where a person follows a code reference, and Checklist is
+where a checklist may be held — welcome, not required. So none is kehikko-bound,
+and each is offered wherever Review is installed.
 
 ## What sending does
 
-**Send review…** first shows what will be posted — how many comments (and how
-many an agent drafted), to which change on which tracker, under which login,
+**Send review…** first shows what will be posted — how many points (and how
+many of them an agent drafted and you kept), how many agent points you have not
+kept and that stay behind, to which change on which tracker, under which login,
 with which verdict — and posts on a second press. The request carries the
-comment ids, verdict and summary that were shown, and the server sends exactly
-those or nothing: if the draft changed in between, it refuses.
+point ids, verdict and summary that were shown, and the server sends exactly
+those or nothing: if the review changed in between, it refuses.
 
-Only unsent comments are sent. Each is stamped `sent` in the draft the moment
+**Only what the person decided is sent**: their own points, and an agent's that
+they kept (pressed **Keep**, or edited its words). The server refuses any other
+id. A kept point is the person's from then on: no agent may reword or drop it,
+and a re-run does not replace it.
+
+Only unsent points are sent. A sent point can be marked **resolved** (and opened
+again) once its author dealt with it. Each is stamped `sent` in the draft the moment
 its request succeeds, so a send that stops half way leaves the draft saying
 truthfully what is on the tracker, and pressing Send again sends only the rest.
 A failure that is not a placement refusal **stops** the send; the verdict is
@@ -178,7 +350,8 @@ that if the approval after it fails, a second press does not post it twice.
 
 `/mcp`, with `list_reviews`, `read_review`, `read_change`, `read_diff`,
 `add_comment`, `reword_comment`, `drop_comment`, `set_verdict`,
-`propose_review`, `drop_run_comments`. Each takes the absolute `project`
+`propose_review`, `drop_run_comments`, and since 1.1.0 `add_evidence`,
+`read_review_md`, `read_focus`, `read_threads` and `draft_reply`. Each takes the absolute `project`
 (`projectPath`, its name before, is still read) and the change — its tracker
 URL, or for a change that already has a draft, `owner/repo#12` /
 `group/project!12`.
@@ -198,7 +371,7 @@ decision per login from `…/pulls/{n}/reviews`; GitLab's `reviewers` and
 is still printed, with the reason.
 
 **What is the person's stays the person's.** An agent cannot reword or drop a
-comment the person wrote, and `set_verdict` cannot replace a summary or a
+comment the person wrote or a point the person kept, and `set_verdict` cannot replace a summary or a
 verdict the person set (the draft records who set each; a summary in a draft
 from before that is read as the person's). An agent may change its own.
 
@@ -217,11 +390,34 @@ from before that is read as the person's). An agent may change its own.
   press **Use this summary** (it asks first when their box has words) or
   **Use this verdict**.
 - `drop_run_comments({ run })`, before a re-run: drops that run's **unsent
-  agent** comments and nothing else — not the person's comments, not a sent
-  one, not another run's, not the summary or the verdict.
+  agent** comments the person has not kept, with the evidence an agent collected
+  for that run or attached to them, and nothing else — not the person's comments
+  or evidence, not a kept or sent one, not another run's, not the summary or the
+  verdict.
+
+### Evidence, focus, the file, and replies
+
+- `add_evidence({ project, change, kind: 'screenshot'|'log'|'test', path | text, caption, point?, run? })`
+  copies a screenshot (PNG, JPEG, GIF or WebP by its bytes, at most 10 MB) or a
+  log or test output (UTF-8 text, at most 1 MB) into the review's folder under a
+  name this module makes (`e-<12 hex>.<ext>`), and lists it in the Evidence
+  section, on its point when it names one. A `path` is read only from inside the
+  project or the system's temporary folder. The page shows a screenshot small on
+  its point and full size when pressed, and a log as text; the files are served
+  as a picture or plain text, `nosniff`, never as a page.
+- `read_review_md` prints the review file itself.
+- `read_focus({ project })`: the change the page has open and where somebody is
+  pointing in it, with the `add_comment` arguments for that place.
+- `read_threads` reads the review comments a change received, as threads
+  (GitHub: each review comment's thread, and the conversation; GitLab: each
+  discussion), and says who the tracker is signed in as and who wrote the change.
+- `draft_reply({ thread, body, todo? })` keeps one reply per thread in the
+  review's Replies, never over the person's. The person reads, edits and posts
+  each from the page (**Post reply…**, then **Post it**): the reply goes to its
+  thread under their login, exactly as shown, or nothing is posted.
 
 **There is no tool that sends.** Nothing an agent does through this door
-reaches a tracker. The page's send wants a ticket only the page holds, and
+reaches a tracker, a reply included. The page's send wants a ticket only the page holds, and
 Factory's send (below) wants a key no agent is given.
 
 ## Factory's send
@@ -280,10 +476,15 @@ when one does not load, the view says so.
 
 ## Limits
 
-- New comments only. It does not show other people's comments or existing
-  threads, and cannot reply to one.
-- The first 100 commits of a change. More are flagged, not listed, and a
-  comment cannot be written in the view of a commit that is not listed.
+- It does not show other people's review comments on the page; on a change you
+  authored, `read_threads` reads them for `/review-reply`, and replies are posted
+  one at a time. GitHub's REST answer does not say whether a thread is resolved.
+- The first 100 commits of a change, and the first 100 review comments,
+  discussions and conversation comments. An agent can still write a point in
+  one commit's own diff (`add_comment` with `commit`); the page writes points on
+  the whole change.
+- The page's focus (`read_focus`) is in memory: after a restart it is empty until
+  the page reports again.
 - A diff over 8 MB is cut off and says so; on GitLab a single commit touching
   more than 100 files is read for its first 100.
 - GitHub Enterprise is not addressed: `locate` reads `github.com` URLs and any
@@ -313,24 +514,38 @@ by refusal with nothing posted, and the key lives in a scratch folder
 or note was posted to a real tracker to build or test this.** The read
 endpoints were run against real public changes.
 
+The review file is tested as a round trip (write, read, the same review, the
+same bytes) and against the files the strict reader must refuse; the move from
+JSON, evidence kept and refused, whose words are whose, the new tools and the
+replies' send are tested through the doors; the page is rendered against a plain
+host, pointing (`location.set`) and "comment here" included. The skills were run
+in the real `claude`, with a scratch home and config, a stand-in model API and
+this module's own doors: each may call its own Review tools without a prompt,
+and is refused another Review tool, a shell command that writes, or `gh`.
+
 ## Layout
 
 ```
 forge/locate.ts     a tracker URL -> { forge, repo, number, host }, whitelisted
 forge/run.ts        the Runner: gh/glab, argv array, no shell, body on stdin
 forge/read.ts       describe, commits, diff (cached), GitLab commit JSON -> patch
-review/shape.ts     what a draft is, and its bounds
+review/shape.ts     what a review is, and its bounds
+review/md.ts        the review as Markdown: the writer and the strict reader
 review/anchor.ts    the anchoring rule, pure
-review/draft.ts     what may happen to a draft, pure
-review/key.ts       the file name a change's draft is kept under
+review/draft.ts     what may happen to a review, pure (and the 1.0.0 JSON reader)
+review/key.ts       the file name a change's review is kept under
 review/send.ts      the plan (pure) and the executor
 review/print.ts     a diff and a draft as text for an agent
 review/shots.ts     the Before / after pictures: found, labelled, allowed, paired (pure)
 factory/key.ts      the Review–Factory key
 factory/door.ts     Factory's send: its rules and its middleware
-store.ts            <project>/.kehikot/review/<key>.json
-doors.ts            /api for the page, /mcp for agents
+forge/threads.ts    the review comments a change received, and posting a reply
+store.ts            <project>/.kehikot/review/<key>.md and <key>/, and the move from JSON
+evidence.ts         what may be kept as evidence, and from where
+focus.ts            what the page has open and where somebody points, for read_focus
+skills.ts           the skills, served with the origin filled in (plugin/skills/*/SKILL.md)
+doors.ts            /api for the page, /mcp for agents, the skills' text
 src/live/           what the selected refs are, from the host's tracker reading
-src/diff/           the unified-diff parser, and how much is drawn at first
-src/view/           the diff with targets, comments, the review panel
+src/diff/           the unified-diff parser the server checks points with
+src/view/           the review document, its points, evidence and replies
 ```

@@ -6,15 +6,48 @@ import { commits as readCommits, describe, diff, held, isSha, login, notes, peop
 import { run as realRun, type Runner } from './forge/run.ts'
 import { ID, MANIFEST, VERSION } from './manifest.ts'
 import { anchor } from './review/anchor.ts'
-import { addComment, bodyOf, dropComment, dropRunComments, logSend, RUN_SAYS, metaOf, ofRun, proposalOf, proposeReview, rewordComment, runOf, setVerdict, stamp, takeProposal } from './review/draft.ts'
+import {
+  addComment,
+  addProof,
+  addReply,
+  atHead,
+  bodyOf,
+  dropComment,
+  dropProof,
+  dropReply,
+  dropRunComments,
+  keepComment,
+  logSend,
+  metaOf,
+  personMaySend,
+  proposalOf,
+  proposeReview,
+  replaceable,
+  resolveComment,
+  rewordComment,
+  rewordReply,
+  RUN_SAYS,
+  runOf,
+  setVerdict,
+  stamp,
+  stampReply,
+  takeProposal,
+} from './review/draft.ts'
+import { mimeOf, takeEvidence } from './evidence.ts'
+import { postReply, threads as readThreads, type Thread } from './forge/threads.ts'
+import { skillAt } from './skills.ts'
 import { keyOf } from './review/key.ts'
 import { shotsOf } from './review/shots.ts'
-import { DEFAULT_DIFF_LINES, MAX_DIFF_LINES, printComment, printDiff, printDraft, printFiles } from './review/print.ts'
+import { DEFAULT_DIFF_LINES, MAX_DIFF_LINES, printComment, printDiff, printDraft, printFiles, printThreads } from './review/print.ts'
 import { execute, gather, plan, type Facts, type Report } from './review/send.ts'
 import {
   DOORS,
   EVIDENCE_KINDS,
   MAX_BODY,
+  MAX_CAPTION,
+  MAX_SAID,
+  PROOF_KINDS,
+  THREAD,
   MAX_PATH,
   MAX_PATH_STEPS,
   MAX_SUMMARY,
@@ -32,7 +65,8 @@ import {
   type View,
 } from './review/shape.ts'
 import { parseDiff, totals } from './src/diff/parse.ts'
-import { changeDraft, listDrafts, readDraftFor } from './store.ts'
+import { changeDraft, forgetProof, keepProofFile, listDrafts, readDraftFor, readProofFile, reviewText } from './store.ts'
+import { focusOf, keepFocus, printFocus } from './focus.ts'
 
 /**
  * Every door but the page, as one function: `answer` takes a request and
@@ -102,6 +136,9 @@ export const REAL: Deps = {
      48 bits against a ceiling of a few hundred comments. */
   id: () => `c-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`,
 }
+
+/** A fresh id with this prefix: `e-` evidence, `r-` a reply. Twelve hex digits, as a point's. */
+const idWith = (deps: Deps, prefix: 'e' | 'r'): string => `${prefix}-${deps.id().replace(/^c-/, '').replace(/[^0-9a-f]/g, '').padEnd(12, '0').slice(0, 12)}`
 
 export const ok = (body: Record<string, unknown>): Reply => ({ status: 200, body: { ok: true, ...body } })
 export const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, error: why } })
@@ -239,7 +276,7 @@ async function writeComment(deps: Deps, projectPath: string | null, target: Targ
      with the head at the moment of sending, and a point read at another head is not sent. */
   const stamped = meta ? { ...meta, head: described.head } : undefined
   const written = changeDraft(projectPath, target, (draft) =>
-    addComment(draft, { view: input.view, commit: range.sha, ...(parent ? { parent } : {}), anchor: placed.anchor }, body.body, by, deps.now(), deps.id(), stamped),
+    addComment(atHead(draft, described.head), { view: input.view, commit: range.sha, ...(parent ? { parent } : {}), anchor: placed.anchor }, body.body, by, deps.now(), deps.id(), stamped),
   )
   return written
 }
@@ -361,13 +398,36 @@ async function send(deps: Deps, projectPath: string | null, target: Target, body
      */
     const ids = Array.isArray(body.ids) && body.ids.length <= 1000 ? body.ids.filter((id): id is string => typeof id === 'string') : null
     if (!ids) return bad('A send names the comments that were confirmed, as ids.')
-    const unsentIds = new Set(draft.comments.filter((c) => !c.sent).map((c) => c.id))
-    const strangers = ids.filter((id) => !unsentIds.has(id))
-    const CHANGED = 'The draft changed after you looked at it, so nothing was sent. Read what it says now and confirm again.'
+    /* Only what the person may send: their own points, and an agent's they kept. An agent's point
+       nobody kept is still a draft, whatever a request says. */
+    const sendable = new Set(draft.comments.filter(personMaySend).map((c) => c.id))
+    const strangers = ids.filter((id) => !sendable.has(id))
+    const CHANGED = 'The review changed after you looked at it, so nothing was sent. Read what it says now and confirm again.'
     if (strangers.length || body.verdict !== draft.verdict || body.summary !== draft.summary) return bad(CHANGED, 409)
     if (!draft.verdict) return bad('Choose a verdict first: comment, approve or request changes.')
 
     return deliver(deps, projectPath, target, draft, { ids, verdict: draft.verdict, summary: draft.summary, by: { kind: 'person' } })
+  })
+}
+
+/**
+ * Post one reply the person confirmed, to its thread. The request carries the words they were
+ * shown; if the reply on disk says anything else now, nothing is posted. Stamped `sent` the moment
+ * the forge took it.
+ */
+async function sendReply(deps: Deps, projectPath: string | null, target: Target, body: Record<string, unknown>): Promise<Reply> {
+  return underLock(projectPath, target, async () => {
+    const read = readDraftFor(projectPath, target)
+    if (!read.ok) return bad(read.error)
+    const reply = read.value.replies.find((r) => r.id === body.id)
+    if (!reply) return bad('There is no such reply in this review.')
+    if (reply.sent) return bad('That reply has already been posted.', 409)
+    if (body.body !== reply.body) return bad('The reply changed after you looked at it, so nothing was posted. Read it again and confirm.', 409)
+    const posted = await postReply(deps.run, target, read.value.change.url, reply.thread, reply.body)
+    if (!posted.ok) return bad(`Nothing was posted: ${posted.error}`, 502)
+    const after = changeDraft(projectPath, target, (was) => ({ ok: true, draft: stampReply(was, reply.id, { at: deps.now(), ...posted.value }) }))
+    if (!after.ok) return bad(`The reply was posted, but the review could not be updated afterwards: ${after.error}`, 500)
+    return ok({ draft: after.value })
   })
 }
 
@@ -420,6 +480,11 @@ const ANNOTATIONS: Record<string, Record<string, boolean>> = {
   set_verdict: REPLACES,
   propose_review: { ...REPLACES, openWorldHint: true },
   drop_run_comments: REPLACES,
+  add_evidence: { ...WRITES, openWorldHint: false },
+  read_review_md: { ...READS, openWorldHint: false },
+  read_focus: { ...READS, openWorldHint: false },
+  read_threads: { ...READS, openWorldHint: true },
+  draft_reply: { ...REPLACES, openWorldHint: false },
 }
 
 function tools() {
@@ -544,9 +609,71 @@ function listed() {
     {
       name: 'drop_run_comments',
       description:
-        'Before a re-run: drop the unsent comments a run wrote (those added with that meta.run). Only those — never the person’s comments, never a sent one, never another run’s, and never the summary or verdict.'
+        'Before a re-run: drop the unsent comments a run wrote (those added with that meta.run), and the evidence an agent collected for that run or attached to them. Only those — never the person’s comments, never a point the person kept, never a sent one, never another run’s, never the person’s evidence, and never the summary or verdict.'
         + NOT_SENT,
       inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE, run: RUN_SCHEMA }, required: ['project', 'change', 'run'] },
+    },
+    {
+      name: 'add_evidence',
+      description:
+        'Keep a piece of evidence beside the review: a screenshot, a run log, or test output. It is copied into the review’s own folder (<project>/'
+        + `${KEHIKOT_DIR}/review/<change>/) and listed in its Evidence section; with point, it is shown on that point. `
+        + 'A screenshot is a PNG, JPEG, GIF or WebP file (at most 10 MB), given as path. A log or test output is UTF-8 text (at most 1 MB), given as path or as text. '
+        + 'A path is read only from inside the project or the system’s temporary folder.'
+        + NOT_SENT,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ...PROJECT,
+          ...CHANGE,
+          kind: { type: 'string', enum: [...PROOF_KINDS], description: 'screenshot, log (a run’s output) or test (test output).' },
+          path: { type: 'string', description: 'The absolute path of the file, inside the project or the system’s temporary folder.' },
+          text: { type: 'string', description: 'For a log or test output: the text itself, instead of path.' },
+          caption: { type: 'string', description: `What it shows, in one line a person reads first. At most ${MAX_CAPTION} characters.` },
+          point: { type: 'string', description: 'The id of the point it supports (from read_review). Leave out for evidence about the change as a whole.' },
+          run: RUN_SCHEMA,
+        },
+        required: ['project', 'change', 'kind', 'caption'],
+      },
+    },
+    {
+      name: 'read_review_md',
+      description:
+        'The review as the Markdown file it is kept in: front matter (change, head, verdict, door, uiux, status), the summary and any proposal with “To get this approved:”, every point with its code reference (path:line@commit), severity, evidence, challenge, ruling and state, the evidence files, the replies and the sends. '
+        + 'Read-only: change it through the other tools, never by editing the file.',
+      inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE }, required: ['project', 'change'] },
+    },
+    {
+      name: 'read_focus',
+      description:
+        'What the person is looking at in Review, in this project: the change its page has open, and the place in that change’s code somebody last pointed at (a file and line, from Source, Diff or a point’s code reference), with why — to look there, or to start a point there. '
+        + 'Use it when you were asked to review “the picked change” or to write a point “here”.',
+      inputSchema: { type: 'object', properties: { ...PROJECT }, required: ['project'] },
+    },
+    {
+      name: 'read_threads',
+      description:
+        'The review comments a change has received, as threads, read from the tracker now: each thread’s id, where it is (path:line, or the conversation), who said what, and on GitLab whether it is resolved. '
+        + 'For the author of a change, before draft_reply. The ids it prints are what draft_reply takes.',
+      inputSchema: { type: 'object', properties: { ...PROJECT, ...CHANGE }, required: ['project', 'change'] },
+    },
+    {
+      name: 'draft_reply',
+      description:
+        'Draft a reply to one thread of review comments on a change the person authored, and what to change in the code for it. One reply per thread: a second draft for a thread replaces your own unsent one, never the person’s. '
+        + 'The reply is posted only if the person posts it from the page; what to change is for them and is never posted.'
+        + NOT_SENT,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ...PROJECT,
+          ...CHANGE,
+          thread: { type: 'string', description: 'The thread’s id, from read_threads.' },
+          body: { type: 'string', description: `The reply, as it would be posted. Markdown. At most ${MAX_BODY} characters.` },
+          todo: { type: 'string', description: 'What to change in the code for this thread, in a few plain lines; empty when nothing needs to change.' },
+        },
+        required: ['project', 'change', 'thread', 'body'],
+      },
     },
   ]
 }
@@ -612,13 +739,15 @@ async function call(deps: Deps, name: string, args: Record<string, unknown>): Pr
 }
 
 async function callAt(deps: Deps, name: string, args: Record<string, unknown>, projectPath: string): Promise<string> {
+  if (name === 'read_focus') return printFocus(focusOf(projectPath))
+
   if (name === 'list_reviews') {
     const drafts = need(listDrafts(projectPath))
     if (!drafts.length) return 'No draft reviews are kept in that project yet. add_comment or set_verdict on a change starts one.'
     return drafts
       .map((d) => {
         const waiting = d.comments.filter((c) => !c.sent).length
-        return `${spell(d.change)} — ${d.change.url} — ${waiting} draft comment${waiting === 1 ? '' : 's'}, ${d.comments.length - waiting} sent, verdict proposed: ${d.verdict ?? 'none'}`
+        return `${spell(d.change)} — ${d.change.url} — ${waiting} draft comment${waiting === 1 ? '' : 's'}, ${d.comments.length - waiting} sent, ${d.evidence.length} piece${d.evidence.length === 1 ? '' : 's'} of evidence, verdict proposed: ${d.verdict ?? 'none'}`
       })
       .join('\n')
   }
@@ -636,6 +765,9 @@ async function callAt(deps: Deps, name: string, args: Record<string, unknown>, p
       `${spell(target)} — ${described.title}`,
       `${described.state}${described.draft ? ' (draft)' : ''}, by ${described.author || 'unknown'} — ${described.url}`,
       `Head commit: ${described.head}`,
+      ...(described.description.trim()
+        ? ['', 'Description:', ...described.description.trim().slice(0, 6000).split('\n').map((l) => `  ${l}`), ...(described.description.length > 6000 ? ['  (the rest of the description is not printed)'] : [])]
+        : ['Description: (none)']),
       ...(who.ok ? printPeople(who.value) : [`Reviewers and approvals could not be read: ${who.error}`]),
       '',
       `Commits, oldest first (${commits.length}${more ? ', and there may be more than this app lists' : ''}):`,
@@ -709,7 +841,7 @@ async function callAt(deps: Deps, name: string, args: Record<string, unknown>, p
     /* Fail before spending a subprocess on a draft there is nowhere to keep. */
     need(readDraftFor(projectPath, target))
     const described = need(await describe(deps.run, target))
-    const draft = need(changeDraft(projectPath, target, (was) => proposeReview(was, input, described.head, deps.now())))
+    const draft = need(changeDraft(projectPath, target, (was) => proposeReview(atHead(was, described.head), input, described.head, deps.now())))
     return [
       `Proposed by run ${input.run}, at head ${short(described.head)}: verdict “${input.verdict}”, ${input.door}${input.uiux ? ', touches what people see' : ''}, `
         + `${input.pathToSuccess.length} step${input.pathToSuccess.length === 1 ? '' : 's'} to approval.`,
@@ -724,11 +856,76 @@ async function callAt(deps: Deps, name: string, args: Record<string, unknown>, p
     let dropped = 0
     need(
       changeDraft(projectPath, target, (was) => {
-        dropped = was.comments.filter((c) => ofRun(c, run!)).length
+        dropped = was.comments.filter((c) => replaceable(c, run!)).length
         return dropRunComments(was, run)
       }),
     )
-    return `Dropped ${dropped} of run ${run}’s unsent comment${dropped === 1 ? '' : 's'}. The person’s comments, sent comments, other runs’ comments, the summary and the verdict were left as they were. Nothing was posted or deleted on the tracker.`
+    return `Dropped ${dropped} of run ${run}’s unsent comment${dropped === 1 ? '' : 's'}, with the evidence collected for them. The person’s comments, points the person kept, sent comments, other runs’ comments, the person’s evidence, the summary and the verdict were left as they were. Nothing was posted or deleted on the tracker.`
+  }
+
+  if (name === 'add_evidence') {
+    const kind = PROOF_KINDS.find((k) => k === args.kind)
+    if (!kind) throw new Error(`kind is one of ${PROOF_KINDS.join(', ')}.`)
+    const caption = typeof args.caption === 'string' ? args.caption.trim() : ''
+    if (!caption || caption.length > MAX_CAPTION || /[\n\r]/.test(caption)) throw new Error(`caption is one line of at most ${MAX_CAPTION} characters: what the evidence shows.`)
+    const point = args.point === undefined || args.point === null || args.point === '' ? undefined : str(args.point, 40)
+    if (point === null) throw new Error('point is the id of a point, from read_review.')
+    const run = args.run === undefined || args.run === null || args.run === '' ? undefined : runOf(args.run)
+    if (run === null) throw new Error(`run: ${RUN_SAYS}`)
+    /* Fail before reading anything when there is nowhere to keep it. */
+    need(readDraftFor(projectPath, target))
+    const taken = takeEvidence(projectPath, kind, { path: args.path, text: args.text })
+    if (!taken.ok) throw new Error(taken.error)
+    const id = idWith(deps, 'e')
+    const file = need(keepProofFile(projectPath, target, `${id}.${taken.extension}`, taken.bytes))
+    const proof = { id, kind, caption, file, bytes: taken.bytes.length, ...(point ? { point } : {}), ...(run ? { run } : {}), by: 'agent' as const, at: deps.now() }
+    const kept = changeDraft(projectPath, target, (was) => addProof(was, proof))
+    if (!kept.ok) {
+      forgetProof(projectPath, target, file)
+      throw new Error(kept.error)
+    }
+    return `Kept as ${id} (${kind}, ${proof.bytes} bytes)${point ? ` on point ${point}` : ''}, in the review’s Evidence section. The person sees it on the page. Nothing was posted.`
+  }
+
+  if (name === 'read_review_md') {
+    const got = need(reviewText(projectPath, target))
+    return got.text === null ? `There is no review of ${spell(target)} in this project yet (${got.file} has not been written). add_comment, set_verdict or propose_review starts one.` : `${got.file}\n\n${got.text}`
+  }
+
+  if (name === 'read_threads') {
+    const [found, described, me] = await Promise.all([readThreads(deps.run, target), describe(deps.run, target), login(deps.run, target)])
+    const by = described.ok ? described.value.author : ''
+    return [
+      `The tracker is signed in as ${me ?? '(it would not say)'}; ${spell(target)} is by ${by || 'somebody it did not name'}.`,
+      printThreads(spell(target), need(found)),
+    ].join('\n')
+  }
+
+  if (name === 'draft_reply') {
+    const thread = typeof args.thread === 'string' && THREAD.test(args.thread) ? args.thread : null
+    if (!thread) throw new Error('thread is a thread’s id, as read_threads prints it.')
+    const body = bodyOf(args.body)
+    if (!body.ok) throw new Error(body.error)
+    const todo = args.todo === undefined || args.todo === null ? '' : typeof args.todo === 'string' && args.todo.length <= MAX_BODY ? args.todo.trim() : null
+    if (todo === null) throw new Error(`todo is text, at most ${MAX_BODY} characters.`)
+    need(readDraftFor(projectPath, target))
+    const found: Thread | undefined = need(await readThreads(deps.run, target)).find((one) => one.id === thread)
+    if (!found) throw new Error(`There is no thread ${thread} on ${spell(target)} now. read_threads lists them.`)
+    const first = found.notes[0]
+    const last = found.notes[found.notes.length - 1]
+    const reply = {
+      id: idWith(deps, 'r'),
+      thread,
+      where: found.where.slice(0, 1020),
+      from: (last?.author || first?.author || 'somebody').slice(0, 100),
+      said: (last?.body ?? '').slice(0, MAX_SAID),
+      body: body.body,
+      todo,
+      by: 'agent' as const,
+      at: deps.now(),
+    }
+    need(changeDraft(projectPath, target, (was) => addReply(was, reply)))
+    return `Drafted reply ${reply.id} to ${found.where} (${thread}). It is not posted: the person reads it on the page, edits it if they like, and posts it themselves.`
   }
 
   throw new Error(`no tool "${name.slice(0, 60)}" here`)
@@ -798,7 +995,7 @@ export async function answer(
   deps: Deps = REAL,
 ): Promise<Reply | null> {
   if (path === '/healthz') {
-    return ok({ id: ID, version: VERSION, where: `<project>/${KEHIKOT_DIR}/review/<change>.json`, patchesHeld: held() })
+    return ok({ id: ID, version: VERSION, where: `<project>/${KEHIKOT_DIR}/review/<change>.md`, patchesHeld: held() })
   }
 
   if (path === '/mcp') {
@@ -807,6 +1004,12 @@ export async function answer(
       return { status: 400, body: { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'not a request' } } }
     }
     return mcp(deps, body as Rpc)
+  }
+
+  /* The Claude Code skills this module offers (`declares.skills`), with this origin filled in. */
+  if (method === 'GET') {
+    const skill = skillAt(path)
+    if (skill) return { status: 200, body: null, raw: { bytes: skill.text, type: 'text/markdown; charset=utf-8' } }
   }
 
   if (!path.startsWith('/api/')) return null
@@ -829,15 +1032,6 @@ export async function answer(
       return ok({ target, ref: spell(target), ...change.value.described, commits: change.value.commits, more: change.value.more })
     }
 
-    if (path === '/api/diff') {
-      const sha = query.get('sha') ?? ''
-      const view = query.get('view')
-      if (view !== 'all' && view !== 'commit') return bad('view is "all" or "commit".')
-      if (!isSha(sha)) return bad('sha is the commit the diff is read at: the head for the whole change, or the commit itself.')
-      const patch = await diff(deps.run, target, { view, sha })
-      return patch.ok ? ok({ ...patch.value }) : bad(patch.error, 502)
-    }
-
     if (path === '/api/draft') {
       const asked = query.get('projectPath')
       const at = asked?.trim() ? await resolveDoorProject(asked) : null
@@ -847,6 +1041,27 @@ export async function answer(
     }
 
     if (path === '/api/login') return ok({ login: await login(deps.run, target) })
+
+    /* One piece of evidence's file, for the page to show: read from the review's own folder, by the
+       name the review gives it, and sent as what it is — a picture or plain text, never a page. */
+    if (path === '/api/evidence') {
+      const asked = query.get('projectPath')
+      const at = asked?.trim() ? await resolveDoorProject(asked) : null
+      if (at && !at.ok) return bad(at.why)
+      const projectPath = at ? at.path : asked
+      const draft = readDraftFor(projectPath, target)
+      if (!draft.ok) return bad(draft.error)
+      const proof = draft.value.evidence.find((p) => p.id === query.get('id'))
+      if (!proof) return bad('There is no such evidence in this review.', 404)
+      const bytes = readProofFile(projectPath, target, proof.file)
+      if (!bytes.ok) return bad(bytes.error, 404)
+      return {
+        status: 200,
+        body: null,
+        raw: { bytes: bytes.value, type: mimeOf(proof.file) },
+        headers: { 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox" },
+      }
+    }
 
     /* The Before / after view: images from the description and the conversation, judged by
        `shotsOf` (https on the forge's own hosts only). Nothing is fetched but the text. */
@@ -902,6 +1117,35 @@ export async function answer(
   }
 
   if (path === '/api/comment/drop') return wrote(changeDraft(projectPath, target, (draft) => dropComment(draft, body.id)))
+
+  /* The person keeps an agent's point: from now on it is theirs, and their send may post it. */
+  if (path === '/api/comment/keep') return wrote(changeDraft(projectPath, target, (draft) => keepComment(draft, body.id, deps.now())))
+
+  if (path === '/api/comment/resolve') {
+    if (typeof body.resolved !== 'boolean') return bad('resolved is true or false.')
+    return wrote(changeDraft(projectPath, target, (draft) => resolveComment(draft, body.id, body.resolved as boolean, deps.now())))
+  }
+
+  if (path === '/api/evidence/drop') return wrote(changeDraft(projectPath, target, (draft) => dropProof(draft, body.id)))
+
+  /* What the page has open and where somebody last pointed, for `read_focus`. In memory: it is now, not a record. */
+  if (path === '/api/focus') {
+    if (!projectPath) return bad('A focus belongs to a project.')
+    const kept = keepFocus(projectPath, target, body, deps.now())
+    return kept ? bad(kept) : ok({})
+  }
+
+  if (path === '/api/reply/reword') {
+    const words = bodyOf(body.body)
+    if (!words.ok) return bad(words.error)
+    const todo = body.todo === undefined ? undefined : typeof body.todo === 'string' && body.todo.length <= MAX_BODY ? body.todo : null
+    if (todo === null) return bad('What to change is text.')
+    return wrote(changeDraft(projectPath, target, (draft) => rewordReply(draft, body.id, words.body, todo, deps.now())))
+  }
+
+  if (path === '/api/reply/drop') return wrote(changeDraft(projectPath, target, (draft) => dropReply(draft, body.id)))
+
+  if (path === '/api/reply/send') return sendReply(deps, projectPath, target, body)
 
   if (path === '/api/verdict') return wrote(changeDraft(projectPath, target, (draft) => setVerdict(draft, body.verdict, body.summary)))
 

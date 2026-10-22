@@ -1,7 +1,8 @@
+import type { SharedLocation } from 'kehikot-module-protocol'
 import { answered, ask } from 'kehikot-module-protocol/client'
 
 import type { Target } from '../../forge/locate.ts'
-import type { Commit, Described, Patch } from '../../forge/read.ts'
+import type { Commit, Described } from '../../forge/read.ts'
 import type { Report } from '../../review/send.ts'
 import type { Shots } from '../../review/shots.ts'
 import type { Draft, Side, Verdict, View } from '../../review/shape.ts'
@@ -49,7 +50,6 @@ export interface Confirmed {
 
 export interface Api {
   change(url: string): Promise<ChangeRead>
-  diff(url: string, view: View, sha: string): Promise<Patch>
   draft(projectPath: string, url: string): Promise<Draft>
   /** Whose login a send would go out under, or null when the CLI would not say. */
   login(url: string): Promise<string | null>
@@ -63,6 +63,21 @@ export interface Api {
   takeProposal(projectPath: string, url: string, which: 'summary' | 'verdict', run: string): Promise<Draft>
   /** The change's before/after pictures, already judged safe to show by the server (`review/shots.ts`). */
   shots(url: string): Promise<{ shots: Shots; unread?: string }>
+  /** The person keeps an agent's point: it is theirs from now on, and their send may post it. */
+  keep(projectPath: string, url: string, id: string): Promise<Draft>
+  /** The person marks a sent point resolved, or opens it again. */
+  resolve(projectPath: string, url: string, id: string, resolved: boolean): Promise<Draft>
+  dropEvidence(projectPath: string, url: string, id: string): Promise<Draft>
+  /** Where a piece of evidence's file is served: a picture's `src`, or the text to fetch. */
+  evidenceUrl(projectPath: string, url: string, id: string): string
+  /** A log's or test output's text. */
+  evidenceText(projectPath: string, url: string, id: string): Promise<string>
+  /** Tell this app's server what the page has open and where somebody points, for an agent's `read_focus`. */
+  focus(projectPath: string, url: string, ref: string, title: string, location: SharedLocation | null): Promise<void>
+  rewordReply(projectPath: string, url: string, id: string, body: string, todo: string): Promise<Draft>
+  dropReply(projectPath: string, url: string, id: string): Promise<Draft>
+  /** Post one reply, with the words the person was shown. */
+  sendReply(projectPath: string, url: string, id: string, body: string): Promise<Draft>
 }
 
 type Body = { ok?: boolean; error?: string } & Record<string, unknown>
@@ -80,7 +95,6 @@ const post = async (path: string, body: Record<string, unknown>): Promise<Body> 
 
 export const api: Api = {
   change: async (url) => (await get('change', { url })) as unknown as ChangeRead,
-  diff: async (url, view, sha) => (await get('diff', { url, view, sha })) as unknown as Patch,
   draft: async (projectPath, url) => (await get('draft', { projectPath, url })).draft as Draft,
   login: async (url) => ((await get('login', { url })).login as string | null) ?? null,
   addComment: async (projectPath, url, input) => (await post('comment', { projectPath, url, ...input })).draft as Draft,
@@ -92,6 +106,21 @@ export const api: Api = {
     const body = await get('shots', { url })
     return { shots: body.shots as Shots, ...(typeof body.unread === 'string' ? { unread: body.unread } : {}) }
   },
+  keep: async (projectPath, url, id) => (await post('comment/keep', { projectPath, url, id })).draft as Draft,
+  resolve: async (projectPath, url, id, resolved) => (await post('comment/resolve', { projectPath, url, id, resolved })).draft as Draft,
+  dropEvidence: async (projectPath, url, id) => (await post('evidence/drop', { projectPath, url, id })).draft as Draft,
+  evidenceUrl: (projectPath, url, id) => `./api/evidence?${new URLSearchParams({ projectPath, url, id }).toString()}`,
+  evidenceText: async (projectPath, url, id) => {
+    const response = await fetch(api.evidenceUrl(projectPath, url, id))
+    if (!response.ok) throw new Error(`The file could not be read (${response.status}).`)
+    return response.text()
+  },
+  focus: async (projectPath, url, ref, title, location) => {
+    await post('focus', { projectPath, url, ref, title, location })
+  },
+  rewordReply: async (projectPath, url, id, body, todo) => (await post('reply/reword', { projectPath, url, id, body, todo })).draft as Draft,
+  dropReply: async (projectPath, url, id) => (await post('reply/drop', { projectPath, url, id })).draft as Draft,
+  sendReply: async (projectPath, url, id, body) => (await post('reply/send', { projectPath, url, id, body })).draft as Draft,
   send: async (projectPath, url, confirmed) => {
     const body = await post('send', { projectPath, url, ...confirmed })
     return { draft: body.draft as Draft, report: body.report as Report }

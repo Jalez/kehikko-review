@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState, type MutableRefObject } from 'react'
 
-import type { HeaderItemInput } from 'kehikot-module-protocol'
+import type { CodeLocation, HeaderItemInput, LocationIntent, LocationSetResult, SharedLocation } from 'kehikot-module-protocol'
 
 import { useHost, type Host as ProtocolHost, type Where } from 'kehikot-module-protocol/client/react'
 
-import { ID } from '../../manifest.ts'
+import { ID } from '../../id.ts'
 import { headerDrawn, rememberHeaderDrawn } from '../header-fallback.tsx'
 
 /** One press on a header item: nothing or `true` for taken, a sentence for not taken, and why. */
@@ -47,6 +47,16 @@ export interface Host {
    * change may have been pushed to.
    */
   trackerAt: string | null
+  /**
+   * Where in a change's code somebody is pointing on this kehikko, and why (`context.location`,
+   * protocol 2.13.0): `show` to look there, `comment` to start a point there. Null when nobody is.
+   */
+  location?: SharedLocation | null
+  /**
+   * Point the kehikko at a place in a change's code (`location.set`): Source opens the file there and
+   * Diff scrolls there. `null` when nothing frames the page or the host did not answer; never rejects.
+   */
+  locate?(location: CodeLocation | null, intent?: LocationIntent): Promise<LocationSetResult | null>
   /** Ask the host for something (a method from the protocol). Rejects when unhosted or refused. */
   request: ProtocolHost['request']
   /** Declare the header items, whole (`kehikot.header`). Absent in a test that draws no header. */
@@ -82,10 +92,12 @@ export function useKehikot(): Host {
       selection,
       trackerAt,
       request: host.request,
+      location: host.location,
+      locate: host.locate,
       header: host.header,
       presses,
       pressed,
     }),
-    [host.where, host.request, host.header, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
+    [host.where, host.request, host.location, host.locate, host.header, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
   )
 }

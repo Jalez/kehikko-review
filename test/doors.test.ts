@@ -13,7 +13,7 @@ import type { Report } from '../review/send.ts'
 import type { Draft } from '../review/shape.ts'
 
 import { doorsFetch } from 'kehikot-module-protocol/serve'
-import { FIRST, GH_URL, HEAD, PATCH, fake, githubReads, isPost, refused, sentBody } from './fake.ts'
+import { FIRST, GH_URL, HEAD, fake, githubReads, isPost, refused, sentBody } from './fake.ts'
 
 /**
  * The doors, called as functions, with a tracker that is a function too.
@@ -84,15 +84,10 @@ describe('reading through the page’s API', () => {
     expect((reply?.body as { commits: { sha: string }[] }).commits.map((c) => c.sha)).toEqual([FIRST, HEAD])
   })
 
-  test('a diff is read for the whole change or for one commit, and nothing but a sha is accepted as one', async () => {
+  test('the page reads no diff of its own any more: Source and Diff show the lines', async () => {
     const { get, runner } = world()
-    const all = await get('/api/diff', { url: GH_URL, view: 'all', sha: HEAD })
-    expect(all?.body).toMatchObject({ ok: true, text: PATCH, truncated: false, view: 'all', sha: HEAD })
-    expect((await get('/api/diff', { url: GH_URL, view: 'commit', sha: HEAD }))?.status).toBe(200)
-    const before = runner.calls.length
-    expect((await get('/api/diff', { url: GH_URL, view: 'commit', sha: '../../user' }))?.status).toBe(400)
-    expect((await get('/api/diff', { url: GH_URL, view: 'sideways', sha: HEAD }))?.status).toBe(400)
-    expect(runner.calls.length).toBe(before)
+    expect((await get('/api/diff', { url: GH_URL, view: 'all', sha: HEAD }))?.status).toBe(404)
+    expect(runner.calls).toHaveLength(0)
   })
 
   test('an address that is not a change is refused before anything is run', async () => {
@@ -303,7 +298,7 @@ describe('sending, against a tracker that is a function', () => {
     await post('/api/verdict', { projectPath: dir, url: GH_URL, verdict: 'request-changes' })
     const reply = await post('/api/send', confirmed)
     expect(reply?.status).toBe(409)
-    expect(errorOf(reply)).toContain('draft changed after you looked')
+    expect(errorOf(reply)).toContain('review changed after you looked')
     expect(runner.calls.filter(isPost)).toEqual([])
 
     /* Likewise a comment it never showed, and a comment that does not exist. */
@@ -372,11 +367,17 @@ describe('the MCP door', () => {
       'set_verdict',
       'propose_review',
       'drop_run_comments',
+      'add_evidence',
+      'read_review_md',
+      'read_focus',
+      'read_threads',
+      'draft_reply',
     ])
     /* The decision this module is built around: an agent drafts, a person sends. */
     for (const one of tools) expect(one.name).not.toMatch(/send|submit|post|publish|approve/i)
     /* And every tool that writes says so in its own description. */
-    for (const one of tools.filter((t) => t.name !== 'read_change' && t.name !== 'read_diff')) expect(one.description).toContain('Nothing is posted to the tracker by this tool')
+    const plainReads = ['read_change', 'read_diff', 'read_review_md', 'read_focus', 'read_threads']
+    for (const one of tools.filter((t) => !plainReads.includes(t.name))) expect(one.description).toContain('Nothing is posted to the tracker by this tool')
     expect(tools.find((t) => t.name === 'add_comment')!.description).toContain('HOW A COMMENT IS ANCHORED')
   })
 
@@ -399,6 +400,11 @@ describe('the MCP door', () => {
       set_verdict: 'destroys',
       propose_review: 'destroys',
       drop_run_comments: 'destroys',
+      add_evidence: 'writes',
+      read_review_md: 'reads',
+      read_focus: 'reads',
+      read_threads: 'reads',
+      draft_reply: 'destroys',
     })
     for (const one of tools) {
       expect(Object.keys(one.inputSchema.properties)).toContain('project')
@@ -471,7 +477,7 @@ describe('the MCP door', () => {
     const byRef = await tool('read_review', { projectPath: dir, change: 'o/r#46' })
     expect(byRef.text).toContain('Reworded.')
     expect(byRef.text).toContain('Verdict proposed: request-changes')
-    expect((await tool('list_reviews', { projectPath: dir })).text).toContain('o/r#46 — https://github.com/o/r/pull/46 — 1 draft comment, 0 sent, verdict proposed: request-changes')
+    expect((await tool('list_reviews', { projectPath: dir })).text).toContain('o/r#46 — https://github.com/o/r/pull/46 — 1 draft comment, 0 sent, 0 pieces of evidence, verdict proposed: request-changes')
   })
 
   test('a refusal is an answer with isError, not a transport failure', async () => {
@@ -510,6 +516,10 @@ describe('the MCP door', () => {
     const base = { projectPath: dir, change: GH_URL }
     await tool('add_comment', { ...base, path: 'src/one.ts', line: 11, body: 'x' })
     await tool('set_verdict', { ...base, verdict: 'comment' })
+    /* An agent's point the person has not kept is not theirs to send. */
+    expect((await post('/api/send', { projectPath: dir, url: GH_URL, ids: ['c-1'], verdict: 'comment', summary: '' }))?.status).toBe(409)
+    expect((await post('/api/comment/keep', { projectPath: dir, url: GH_URL, id: 'c-1' }))?.status).toBe(200)
+    expect((await tool('reword_comment', { ...base, id: 'c-1', body: 'different' })).text).toContain('kept that point')
     expect((await post('/api/send', { projectPath: dir, url: GH_URL, ids: ['c-1'], verdict: 'comment', summary: '' }))?.status).toBe(200)
     expect((await tool('reword_comment', { ...base, id: 'c-1', body: 'different' })).text).toContain('already been sent')
     expect((await tool('drop_comment', { ...base, id: 'c-1' })).text).toContain('already been sent')

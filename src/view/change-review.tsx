@@ -1,59 +1,47 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { HeaderItemInput } from 'kehikot-module-protocol'
+import type { CodeLocation, HeaderItemInput, LocationIntent, LocationSetResult, SharedLocation } from 'kehikot-module-protocol'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { opening } from '@/diff/budget'
 import { HeaderFallback } from '@/header-fallback'
-import { ALL, SHOTS, headerOf } from '@/header'
+import { DOCUMENT, SHOTS, headerOf } from '@/header'
 import type { Host } from '@/wire/use-kehikot'
-import { parseDiff, totals, type FileDiff } from '@/diff/parse'
 import type { Api, ChangeRead } from '@/wire/api'
 
-import { short, type Comment, type Draft, type Side, type View } from '../../review/shape.ts'
+import { ID } from '../../id.ts'
+import { short, type Comment, type Draft } from '../../review/shape.ts'
 
-import { CommentCard, Composer } from './comment.tsx'
-import { FileSection, type Pick } from './file-diff.tsx'
+import { ReviewDocument } from './document.tsx'
 import { HoldingContext, drafts, type Holding } from './holding.ts'
-import { ReviewPanel } from './review-panel.tsx'
 import { ShotsView } from './shots.tsx'
+import { askOf, commentAsked, locationOf, placeOf, type Place } from './where.ts'
 import { heldAtProject } from '../wire/held-at-project.ts'
 
 /**
- * One change, being reviewed: its header and commit picker, the diff of the
- * view that is picked, and the review being drafted.
+ * One change, being reviewed: its header, and the review of it as a document.
  *
- * ## Three things are loaded, and they are deliberately separate
+ * Review draws no diff. A point's code reference is a place in the change's code; pressing it says
+ * so to the kehikko (`location.set`, intent `show`), and Source opens the file there while Diff
+ * shows the old and the new at that spot. The other way round, somebody asking for a comment at a
+ * place (`context.location`, intent `comment`) opens "New point at path:line" here. The server still
+ * checks every point against the change's real diff when it is written.
  *
- * - The CHANGE (what it is, its head, its commits) — from the tracker, through
- *   this app's server. Asked when the page opens on a change and again when
- *   the host's reading says the head moved.
- * - A DIFF — one per view. The whole change at its head, or one commit.
- * - The DRAFT — from a file in the project. Re-read when the window regains
- *   focus and on a slow interval, because an agent writes to the same file
- *   over MCP and a comment it adds should appear without anybody reloading.
+ * ## Two things are loaded, and they are deliberately separate
  *
- * A failure of one is drawn where that one would have been, in the tracker's
- * own words, and does not take the other two with it: a diff that will not
- * load still leaves the review panel, and a project that is not open still
- * leaves the diff.
+ * - The CHANGE (what it is, its head, its commits) — from the tracker, through this app's server.
+ *   Asked when the page opens on a change and again when the host's reading says the head moved.
+ * - The REVIEW — from a file in the project. Re-read when the window regains focus and on a slow
+ *   interval, because an agent writes to the same file over MCP and a point it adds should appear
+ *   without anybody reloading.
+ *
+ * A failure of one is drawn where that one would have been, in the tracker's own words, and does not
+ * take the other with it.
  */
 
 type Loaded<T> = { at: 'loading' } | { at: 'error'; error: string } | { at: 'ok'; value: T }
 
-/** Which diff is on screen — or none: `shots` is the Before / after view. `all` has no sha of its own: it is always at the change's current head. */
-type Showing = { view: 'all' } | { view: 'commit'; sha: string } | { view: 'shots' }
-
-interface Patch {
-  /** Which diff this is: the view and the commit it was read for. */
-  of: string
-  files: FileDiff[]
-  truncated: boolean
-  empty: boolean
-}
-
-/** How often the draft is re-read while the page is open. Slow: it is a file read, and focus catches the common case. */
+/** How often the review is re-read while the page is open. Slow: it is a file read, and focus catches the common case. */
 const DRAFT_EVERY_MS = 20_000
 
 const say = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -63,8 +51,8 @@ const note = (text: string) => <p className="text-[0.7rem] leading-4 text-muted-
 function Failure({ error, onAgain }: { error: string; onAgain: () => void }) {
   return (
     <div className="flex flex-col gap-1">
-      {/* The CLI's own words, verbatim: `gh` says "gh auth login" when a token
-          has expired, and that is the sentence the person needs. */}
+      {/* The CLI's own words, verbatim: `gh` says "gh auth login" when a token has expired, and that
+          is the sentence the person needs. */}
       <p role="alert" className="rounded-md border border-del-mark/50 bg-del px-2 py-1 font-mono text-[0.7rem] leading-4">
         {error}
       </p>
@@ -77,6 +65,14 @@ function Failure({ error, onAgain }: { error: string; onAgain: () => void }) {
   )
 }
 
+/** What a press on a code reference is told when it was not taken, in a sentence. Null when it was. */
+export function locatedSaid(result: LocationSetResult | null): string | null {
+  if (!result) return 'Nothing is framing this page, so there is no Source or Diff to show those lines in.'
+  if (result.outcome === 'taken') return null
+  if (result.outcome === 'not-selected') return `Kehikot did not point there: this change is not selected on the canvas any more.${result.why ? ` ${result.why}` : ''}`
+  return `Kehikot did not point there${result.why ? `: ${result.why}` : '.'}`
+}
+
 export function ChangeReview({
   refName,
   url,
@@ -87,6 +83,8 @@ export function ChangeReview({
   api,
   round = 0,
   chrome,
+  location = null,
+  locate,
 }: {
   /** The ref as selected on the canvas: `gh#46`, `!3105`. */
   refName: string
@@ -97,7 +95,7 @@ export function ChangeReview({
   /** The head the host's reading last heard, if any. Not trusted as the head — only as a reason to ask the forge again. */
   hintHead: string | null
   projectPath: string | null
-  /** The project's id: drafts are held by it, so a renamed folder keeps them. */
+  /** The project's id: typed words are held by it, so a renamed folder keeps them. */
   projectId?: string | null
   api: Api
   /** Bumped by the page when its own server is back after not answering: whatever failed here is asked again. */
@@ -110,6 +108,10 @@ export function ChangeReview({
     changes: readonly string[]
     onChange(ref: string): void
   }
+  /** Where somebody is pointing in a change's code on this kehikko (`context.location`). */
+  location?: SharedLocation | null
+  /** Point the kehikko at a place (`location.set`). Absent when nothing frames the page. */
+  locate?(location: CodeLocation | null, intent?: LocationIntent): Promise<LocationSetResult | null>
 }) {
   /* ---- the change ---- */
   const [change, setChange] = useState<Loaded<ChangeRead>>({ at: 'loading' })
@@ -118,14 +120,9 @@ export function ChangeReview({
   const read = useRef<{ key: string; head: string } | null>(null)
   useEffect(() => {
     const key = `${url}|${again}`
-    /*
-     * `hintHead` is a dependency on purpose: the host's reading naming a head
-     * this page has not seen is the one signal it gets that somebody pushed.
-     * The forge is then asked, and what IT says is the head. A hint that only
-     * repeats what the forge already said — which is what arrives a moment
-     * after every first load, when the host's detail read lands — costs
-     * nothing.
-     */
+    /* `hintHead` is a dependency on purpose: the host's reading naming a head this page has not seen
+       is the one signal it gets that somebody pushed. The forge is then asked, and what IT says is
+       the head. */
     if (read.current?.key === key && (hintHead === null || hintHead === read.current.head)) return
     let live = true
     setChange((was) => (was.at === 'ok' && read.current?.key === key ? was : { at: 'loading' }))
@@ -146,38 +143,12 @@ export function ChangeReview({
   const commits = change.at === 'ok' ? change.value.commits : []
 
   /* ---- which view ---- */
-  const [showing, setShowing] = useState<Showing>({ view: 'all' })
-  /* A commit that is no longer one of the change's (a force-push) cannot stay
-     picked: there would be a diff on screen for something the change does not
-     contain. */
-  useEffect(() => {
-    if (showing.view === 'commit' && change.at === 'ok' && !change.value.commits.some((c) => c.sha === showing.sha)) setShowing({ view: 'all' })
-  }, [change, showing])
-  const sha = showing.view === 'all' ? head : showing.view === 'commit' ? showing.sha : null
-  /* The frame comments are written in: a diff. The Before / after view is none. */
-  const frame: View | null = showing.view === 'shots' ? null : showing.view
+  const [showing, setShowing] = useState<typeof DOCUMENT | typeof SHOTS>(DOCUMENT)
 
-  /* ---- the diff of that view ---- */
-  const [patch, setPatch] = useState<Loaded<Patch>>({ at: 'loading' })
-  const [patchAgain, setPatchAgain] = useState(0)
-  useEffect(() => {
-    if (!sha || !frame) return
-    let live = true
-    setPatch({ at: 'loading' })
-    api
-      .diff(url, frame, sha)
-      .then((got) => live && setPatch({ at: 'ok', value: { of: `${showing.view}:${sha}`, files: parseDiff(got.text), truncated: got.truncated, empty: !got.text.trim() } }))
-      .catch((e: unknown) => live && setPatch({ at: 'error', error: say(e) }))
-    return () => {
-      live = false
-    }
-  }, [api, url, showing.view, frame, sha, patchAgain])
-
-  /* ---- the draft ---- */
+  /* ---- the review ---- */
   const [draft, setDraft] = useState<Loaded<Draft>>({ at: 'loading' })
-  /* Counts writes. A re-read that started before a write finished would carry
-     the draft from before it, and applying it would make a comment the person
-     just saved vanish until the next re-read. */
+  /* Counts writes. A re-read that started before a write finished would carry the review from
+     before it, and applying it would make a point the person just saved vanish until the next re-read. */
   const writes = useRef(0)
   const reread = useCallback(() => {
     if (!projectPath) return
@@ -188,8 +159,8 @@ export function ChangeReview({
         if (writes.current === started) setDraft({ at: 'ok', value })
       })
       .catch((e: unknown) => {
-        /* A failed RE-read leaves the draft on screen alone; only a first read
-           that fails has nothing better to show than the error. */
+        /* A failed RE-read leaves the review on screen alone; only a first read that fails has
+           nothing better to show than the error. */
         if (writes.current === started) setDraft((was) => (was.at === 'ok' ? was : { at: 'error', error: say(e) }))
       })
   }, [api, projectPath, url])
@@ -206,22 +177,18 @@ export function ChangeReview({
     }
   }, [reread, projectPath])
 
-  /** Run a write and take the draft it answers with as the truth. */
-  /*
-   * The page's Try again, after its own server did not answer. Only what FAILED is asked again: a
-   * diff that is on screen stays on screen, and nothing typed against it is disturbed.
-   */
-  const failed = useRef({ change: false, patch: false })
-  failed.current = { change: change.at === 'error', patch: patch.at === 'error' }
-  const asked = useRef(round)
+  /* The page's Try again, after its own server did not answer: what failed is asked again. */
+  const failed = useRef(false)
+  failed.current = change.at === 'error'
+  const roundSeen = useRef(round)
   useEffect(() => {
-    if (round === asked.current) return
-    asked.current = round
-    if (failed.current.change) setAgain((n) => n + 1)
-    if (failed.current.patch) setPatchAgain((n) => n + 1)
+    if (round === roundSeen.current) return
+    roundSeen.current = round
+    if (failed.current) setAgain((n) => n + 1)
     reread()
   }, [round, reread])
 
+  /** Run a write and take the review it answers with as the truth. */
   const write = useCallback(async (does: () => Promise<Draft>): Promise<void> => {
     writes.current += 1
     const value = await does()
@@ -229,145 +196,49 @@ export function ChangeReview({
     setDraft({ at: 'ok', value })
   }, [])
 
-  /* ---- picking lines ---- */
-  /*
-   * What is being typed on this change, held across a reload of the page (the protocol's `held`), under
-   * this project and this change. A stale page reloads itself — on the Save press that found it
-   * out, or on the draft re-read every twenty seconds — and without this a comment half written
-   * went with it.
-   */
+  /* ---- what is being typed, held across a reload ---- */
   const here = heldAtProject(drafts, { projectId, projectPath }) ?? null
   const holding = useMemo<Holding>(
     () => ({
       read: (target) => here?.read(`${url}|${target}`) ?? null,
-      keep: (target, draft) => here?.keep(`${url}|${target}`, draft),
+      keep: (target, held) => here?.keep(`${url}|${target}`, held),
     }),
     [here, url],
   )
-  /** Where a new comment's words are held: the view, the commit, the file by PATH, the side and the lines. */
-  const newTarget = (view: string, commit: string, path: string, at: Pick) => `new:${view}:${commit}:${at.side}:${at.start}:${at.line}:${path}`
-  const [heldTick, setHeldTick] = useState(0)
 
-  const [pick, setPick] = useState<Pick | null>(null)
-  /* A pick is a place in ONE diff. Changing the view changes what every number
-     means, so the pick does not survive it. */
-  useEffect(() => setPick(null), [showing.view, sha, url])
-
-  /* ---- which files are open ---- */
-  /*
-   * The files of the diff ON SCREEN, and of no other. For one render after the selector moves,
-   * `patch` is still the diff that was showing; a held comment reopened against that list was
-   * picked at the position its file has in the OTHER diff, and its box came back on whatever sits
-   * there in this one — open and empty, with the words held somewhere nobody could see.
-   */
-  const files = patch.at === 'ok' && patch.value.of === `${showing.view}:${sha}` ? patch.value.files : null
-  const plan = useMemo(() => (files ? opening(files) : null), [files])
-  const [moved, setMoved] = useState<Record<number, boolean>>({})
-  useEffect(() => setMoved({}), [files])
-
-  /* ---- going to a comment ---- */
-  const [goingTo, setGoingTo] = useState<string | null>(null)
+  /* ---- "comment here": a place somebody asked for a point at ---- */
+  const [asked, setAsked] = useState<Place | null>(null)
+  const handled = useRef(new Set<string>())
   useEffect(() => {
-    if (!goingTo || patch.at !== 'ok') return
-    /* An id is this app's own `c-…`; anything else is not put into a selector. */
-    const element = /^[\w-]+$/.test(goingTo) ? document.querySelector(`[data-comment="${goingTo}"]`) : null
-    /* Optional call: not every DOM this renders in has it, and failing to
-       scroll is not a reason to fail. */
-    element?.scrollIntoView?.({ block: 'center' })
-    setGoingTo(null)
-  }, [goingTo, patch])
+    if (!location || !commentAsked(location, refName, handled.current, ID)) return
+    handled.current.add(askOf(location))
+    setAsked(placeOf(location))
+    setShowing(DOCUMENT)
+  }, [location, refName])
+
+  /* ---- what the page has open, for an agent's `read_focus` ---- */
+  const shownTitle = change.at === 'ok' && change.value.title ? change.value.title : title
+  const focusKey = projectPath ? JSON.stringify([projectPath, url, refName, shownTitle, location ?? null]) : ''
+  useEffect(() => {
+    if (!focusKey || !projectPath) return
+    /* A report that does not land is not worth a sentence: an agent is then told nothing is open. */
+    void api.focus(projectPath, url, refName, shownTitle, location ?? null).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the key is everything it says
+  }, [focusKey])
 
   const [login, setLogin] = useState<string | null>(null)
 
   const all = draft.at === 'ok' ? draft.value.comments : []
-  /* The comments that belong to the diff on screen, and only those. An
-     all-changes comment written at an older head is NOT one of them even in the
-     all-changes view: its numbers are from a diff that is gone, and drawing it
-     under today's line 40 would be this page moving it — the one thing a
-     comment is promised never to suffer. It stays in the review panel, marked. */
-  const inView = all.filter((c) => c.view === showing.view && c.commit === sha)
-  const waitingIn = (view: View, commit: string | null) => all.filter((c) => !c.sent && c.view === view && c.commit === commit).length
-
+  const waiting = all.filter((c) => !c.sent).length
   const tracker = /(^|\.)github\.com$/.test(safeHost(url)) ? 'GitHub' : 'GitLab'
-  const shownTitle = change.at === 'ok' && change.value.title ? change.value.title : title
-
-  const jump = (comment: Comment) => {
-    if (comment.view === 'commit' && commits.some((c) => c.sha === comment.commit)) setShowing({ view: 'commit', sha: comment.commit })
-    else if (comment.view === 'all') setShowing({ view: 'all' })
-    setGoingTo(comment.id)
-  }
-
-  const pickLine = (file: number) => (side: Side, line: number, extend: boolean) => {
-    /* Pressing another line leaves the box that was open, as it always has; its held copy goes with it. */
-    if (pick && sha && files?.[pick.file]) holding.keep(newTarget(showing.view, sha, files[pick.file]!.path, pick), null)
-    setPick((was) =>
-      /* Shift extends a pick in the same column of the same file. Anything
-         else starts a new one: a range across two files or two columns is not
-         something either tracker can hold. */
-      extend && was && was.file === file && was.side === side
-        ? { file, side, start: Math.min(was.start, line), line: Math.max(was.line, line) }
-        : { file, side, start: line, line },
-    )
-  }
-
-  /*
-   * A new comment that was half written when the page reloaded: its line is picked again and its
-   * box opens with the words in it — once the diff it was written on is the one on screen, and
-   * only there. The words are in the key with the view, the commit, the file and the lines, so
-   * they cannot open on another line.
-   */
-  useEffect(() => {
-    if (!here || !sha || !files || pick) return
-    const prefix = `${url}|new:${showing.view}:${sha}:`
-    for (const target of Object.keys(here.all())) {
-      if (!target.startsWith(prefix)) continue
-      const [side, start, line, ...path] = target.slice(prefix.length).split(':')
-      const file = files.findIndex((f) => f.path === path.join(':'))
-      if (file < 0 || (side !== 'new' && side !== 'old')) continue
-      setPick({ file, side, start: Number(start), line: Number(line) })
-      return
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per diff shown; `pick` is read, not followed
-  }, [here, url, showing.view, sha, files])
-
-  /*
-   * Held words whose target is gone: a new comment on a commit that is no longer this change's
-   * head (or one of its commits), on a file the diff no longer has, or a rewording of a comment
-   * that was removed. They are SHOWN, with what they were about, rather than opened somewhere
-   * they were not aimed at or dropped.
-   */
-  void heldTick
-  const strays = !here || change.at !== 'ok' || draft.at !== 'ok'
-    ? []
-    : Object.entries(here.all()).filter(([target]) => {
-        if (!target.startsWith(`${url}|`)) return false
-        const rest = target.slice(url.length + 1)
-        if (rest.startsWith('reword:')) return !draft.value.comments.some((c) => c.id === rest.slice('reword:'.length))
-        if (!rest.startsWith('new:')) return false
-        const [, view, commit, , , , ...path] = rest.split(':')
-        if (view === 'all' ? commit !== head : !commits.some((c) => c.sha === commit)) return true
-        const shownHere = view === showing.view && commit === sha && files !== null
-        return shownHere && !files.some((f) => f.path === path.join(':'))
-      })
 
   /*
    * The header: the view switch and, when several changes are selected, the change switch. Declared
-   * whole, and again only when it is a different list: a keystroke in a comment changes none of it.
+   * whole, and again only when it is a different list: a keystroke in a point changes none of it.
    */
   const items = useMemo<HeaderItemInput[]>(
-    () =>
-      chrome
-        ? headerOf({
-            changes: chrome.changes,
-            change: refName,
-            commits: commits.map((c) => ({ sha: c.sha, title: c.title, waiting: waitingIn('commit', c.sha) })),
-            waitingAll: waitingIn('all', head),
-            showing: showing.view === 'all' ? ALL : showing.view === 'shots' ? SHOTS : showing.sha,
-            more: change.at === 'ok' && Boolean(change.value.more),
-          })
-        : [],
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `waitingIn` is a function of `all`
-    [chrome?.changes, refName, commits, head, showing, all, change],
+    () => (chrome ? headerOf({ changes: chrome.changes, change: refName, waiting, showing }) : []),
+    [chrome, refName, waiting, showing],
   )
   const itemsKey = chrome && change.at === 'ok' ? JSON.stringify(items) : ''
   const declare = chrome?.header
@@ -384,10 +255,8 @@ export function ChangeReview({
       return true
     }
     if (item === 'showing') {
-      if (value === ALL) setShowing({ view: 'all' })
-      else if (value === SHOTS) setShowing({ view: 'shots' })
-      else if (typeof value === 'string' && commits.some((c) => c.sha === value)) setShowing({ view: 'commit', sha: value })
-      else return 'That commit is no longer one of this change’s.'
+      if (value === DOCUMENT || value === SHOTS) setShowing(value)
+      else return 'Review shows the review or the Before / after pictures.'
       return true
     }
     return 'That is not something this page has.'
@@ -401,198 +270,115 @@ export function ChangeReview({
     [presses],
   )
 
-  const canWrite = Boolean(projectPath) && draft.at === 'ok' && sha !== null && frame !== null
-
-  const reword = (id: string, body: string) => write(() => api.reword(projectPath!, url, id, body))
-  const drop = (id: string) => write(() => api.drop(projectPath!, url, id))
+  const onLocate = async (comment: Comment): Promise<string | null> => {
+    if (!locate) return locatedSaid(null)
+    return locatedSaid(await locate(locationOf(comment, refName), 'show'))
+  }
 
   return (
     <HoldingContext.Provider value={holding}>
-    <section className="flex min-w-0 flex-col gap-2" data-ref={refName}>
-      {/* No toolbar: View is the host's. This control is for a page no host draws it for. */}
-      {chrome && !chrome.drawn && change.at === 'ok' ? <HeaderFallback items={items} onPress={press} className="fixed top-1 right-1" /> : null}
-      <header className="flex min-w-0 flex-col gap-1">
-        <h2 className={`text-[0.75rem] leading-4 font-semibold${chrome && !chrome.drawn ? ' pr-6' : ''}`}>
-          <span className="font-mono">{refName}</span>
-          {shownTitle ? <span className="font-normal"> {shownTitle}</span> : null}
-        </h2>
-        <p className="flex flex-wrap items-center gap-1 text-[0.7rem] leading-4 text-muted-foreground">
-          {change.at === 'ok' ? (
-            <>
-              <Badge className="px-1.5 text-[0.65rem]">{change.value.state}</Badge>
-              {change.value.draft ? (
-                <Badge variant="outline" className="px-1.5 text-[0.65rem]">
-                  draft
-                </Badge>
-              ) : null}
-              {change.value.author ? <span>by {change.value.author}</span> : null}
-              <span className="font-mono" title={`head ${change.value.head}`}>
-                {short(change.value.head)}
-              </span>
-            </>
-          ) : null}
-          {/* `noreferrer` as well as `noopener`: a referrer would tell the
-              tracker which host somebody is reading from, and buys nothing. */}
-          <a className="underline underline-offset-2" href={url} target="_blank" rel="noopener noreferrer">
-            open on the tracker
-          </a>
-        </p>
-
-      </header>
-
-      {strays.length ? (
-        <div data-testid="kept-words" className="flex min-w-0 flex-col gap-1 rounded-md border bg-card p-2 text-[0.7rem] leading-4">
-          <p className="text-muted-foreground">
-            Typed here and not saved. What {strays.length === 1 ? 'it was' : 'they were'} written on is no longer part of this change, so{' '}
-            {strays.length === 1 ? 'it is' : 'they are'} kept here rather than put on another line:
+      <section className="flex min-w-0 flex-col gap-2" data-ref={refName}>
+        {/* No toolbar: View is the host's. This control is for a page no host draws it for. */}
+        {chrome && !chrome.drawn && change.at === 'ok' ? <HeaderFallback items={items} onPress={press} className="fixed top-1 right-1" /> : null}
+        <header className="flex min-w-0 flex-col gap-1">
+          <h2 className={`text-[0.75rem] leading-4 font-semibold${chrome && !chrome.drawn ? ' pr-6' : ''}`}>
+            <span className="font-mono">{refName}</span>
+            {shownTitle ? <span className="font-normal"> {shownTitle}</span> : null}
+          </h2>
+          <p className="flex flex-wrap items-center gap-1 text-[0.7rem] leading-4 text-muted-foreground">
+            {change.at === 'ok' ? (
+              <>
+                <Badge className="px-1.5 text-[0.65rem]">{change.value.state}</Badge>
+                {change.value.draft ? (
+                  <Badge variant="outline" className="px-1.5 text-[0.65rem]">
+                    draft
+                  </Badge>
+                ) : null}
+                {change.value.author ? <span>by {change.value.author}</span> : null}
+                <span className="font-mono" title={`head ${change.value.head}`}>
+                  {short(change.value.head)}
+                </span>
+              </>
+            ) : null}
+            {/* `noreferrer` as well as `noopener`: a referrer would tell the tracker which host somebody is reading from. */}
+            <a className="underline underline-offset-2" href={url} target="_blank" rel="noopener noreferrer">
+              open on the tracker
+            </a>
           </p>
-          {strays.map(([target, one]) => (
-            <div key={target} data-kept={target} className="flex min-w-0 flex-col gap-1 rounded-md border px-2 py-1">
-              <p className="text-muted-foreground">{one.aim}</p>
-              <p className="min-w-0 whitespace-pre-wrap text-[0.75rem] leading-snug [overflow-wrap:anywhere]">{one.text}</p>
-              <p>
-                <Button
-                  type="button"
-                  variant="link"
-                  size="sm"
-                  className="h-auto p-0 text-[0.7rem]"
-                  onClick={() => {
-                    here?.keep(target, null)
-                    setHeldTick((n) => n + 1)
-                  }}
-                >
-                  Discard
-                </Button>
-              </p>
-            </div>
-          ))}
-        </div>
-      ) : null}
+        </header>
 
-      {change.at === 'loading' ? note(`Asking ${tracker} about ${refName}…`) : null}
-      {change.at === 'error' ? <Failure error={change.error} onAgain={() => setAgain((n) => n + 1)} /> : null}
+        {change.at === 'loading' ? note(`Asking ${tracker} about ${refName}…`) : null}
+        {change.at === 'error' ? <Failure error={change.error} onAgain={() => setAgain((n) => n + 1)} /> : null}
 
-      {!projectPath
-        ? note('No project is open, so there is nowhere to keep a draft: the diff can be read, and comments cannot be written. Open a project in Kehikot to review.')
-        : draft.at === 'error'
-          ? <Failure error={draft.error} onAgain={reread} />
-          : null}
+        {!projectPath
+          ? note('No project is open, so there is nowhere to keep a review. Open a project in Kehikot to review.')
+          : draft.at === 'error'
+            ? <Failure error={draft.error} onAgain={reread} />
+            : null}
 
-      {change.at === 'ok' && showing.view === 'shots' ? <ShotsView api={api} url={url} /> : null}
+        {change.at === 'ok' && showing === SHOTS ? <ShotsView api={api} url={url} /> : null}
 
-      {change.at === 'ok' && frame !== null ? (
-        <div className="flex min-w-0 flex-col gap-1" data-view={showing.view}>
-          {patch.at === 'loading' ? note(showing.view === 'all' ? 'Reading the diff of the whole change…' : `Reading the diff of commit ${short(sha ?? '')}…`) : null}
-          {patch.at === 'error' ? <Failure error={patch.error} onAgain={() => setPatchAgain((n) => n + 1)} /> : null}
-          {patch.at === 'ok' && files && plan ? (
-            <>
-              <Totals files={files} closed={plan.closed} heldBack={plan.heldBack} />
-              {patch.value.truncated ? (
-                <p className="rounded-md border border-del-mark bg-del px-2 py-1 text-[0.7rem] leading-4">
-                  This diff was longer than this app reads into memory and was cut off part-way. Every file below is real, and there may be
-                  files after them that never arrived — so this is not the whole change, and a review of it is not a review of all of it.
-                </p>
-              ) : null}
-              {!files.length
-                ? note(
-                    patch.value.empty
-                      ? 'The tracker answered with an empty diff. That is what a change with no differences looks like, and it is not an error.'
-                      : 'The tracker answered, and what it printed is not a unified diff this app can read.',
-                  )
-                : null}
-              {files.map((file, at) => {
-                const here = inView.filter((c) => c.path === file.path)
-                const open = moved[at] ?? (plan.open.has(at) || here.length > 0 || pick?.file === at)
-                const picking = pick && pick.file === at ? pick : null
-                return (
-                  <FileSection
-                    /* Keyed by the view as well as the index: the same position
-                       in another diff is another file, and must not inherit how
-                       many of its lines were drawn. */
-                    key={`${showing.view}:${sha}:${at}`}
-                    file={file}
-                    open={open}
-                    onToggle={() => setMoved((was) => ({ ...was, [at]: !open }))}
-                    comments={here}
-                    pick={picking}
-                    onPick={canWrite ? pickLine(at) : null}
-                    composer={
-                      picking && sha ? (
-                        <Composer
-                          label={`Comment on ${picking.side} ${picking.start === picking.line ? `line ${picking.line}` : `lines ${picking.start}–${picking.line}`} of ${file.path}`}
-                          saveLabel="Add to review"
-                          held={{
-                            target: newTarget(showing.view, sha, file.path, picking),
-                            aim: `a comment on ${picking.side} ${picking.start === picking.line ? `line ${picking.line}` : `lines ${picking.start}–${picking.line}`} of ${file.path} at ${short(sha)}`,
-                          }}
-                          onCancel={() => setPick(null)}
-                          onSave={(body) =>
-                            write(() =>
-                              api.addComment(projectPath!, url, {
-                                /* A composer is only open on a diff, so there is a frame. */
-                                view: frame as View,
-                                /* The frame, sent explicitly: the head this diff
-                                   was read at, or the commit. The server refuses
-                                   if the change has moved past it. */
-                                commit: sha,
-                                path: file.path,
-                                side: picking.side,
-                                line: picking.line,
-                                ...(picking.start !== picking.line ? { startLine: picking.start } : {}),
-                                body,
-                              }),
-                            ).then(() => setPick(null))
-                          }
-                        />
-                      ) : null
-                    }
-                    renderComment={(comment) => <CommentCard comment={comment} onReword={reword} onDrop={drop} />}
-                  />
-                )
-              })}
-            </>
-          ) : null}
-        </div>
-      ) : null}
-
-      {projectPath && draft.at === 'ok' && change.at === 'ok' ? (
-        <ReviewPanel
-          draft={draft.value}
-          head={change.value.head}
-          commits={commits.map((c) => c.sha)}
-          tracker={tracker}
-          refName={change.value.ref}
-          login={login}
-          onJump={jump}
-          onReword={reword}
-          onDrop={drop}
-          onSummary={(summary) => write(() => api.setVerdict(projectPath, url, undefined, summary))}
-          onVerdict={(verdict) => write(() => api.setVerdict(projectPath, url, verdict, undefined))}
-          onConfirming={() => {
-            /* Asked only now: it is a subprocess, and whose login this is only
-               matters to somebody about to post under it. */
-            api
-              .login(url)
-              .then(setLogin)
-              .catch(() => setLogin(null))
-          }}
-          onTake={(which, run) => write(() => api.takeProposal(projectPath, url, which, run))}
-          onSend={async (confirmed) => {
-            writes.current += 1
-            try {
-              const made = await api.send(projectPath, url, confirmed)
-              setDraft({ at: 'ok', value: made.draft })
-              return made.report
-            } finally {
-              writes.current += 1
-              /* Whatever happened — including a refusal — the draft on disk is
-                 the truth about what was posted. Read it. */
-              reread()
-            }
-          }}
-        />
-      ) : null}
-    </section>
+        {showing === DOCUMENT && projectPath && draft.at === 'ok' && change.at === 'ok' ? (
+          <ReviewDocument
+            draft={draft.value}
+            head={change.value.head}
+            commits={commits.map((c) => c.sha)}
+            tracker={tracker}
+            refName={change.value.ref}
+            login={login}
+            access={{ src: (id) => api.evidenceUrl(projectPath, url, id), text: (id) => api.evidenceText(projectPath, url, id) }}
+            asked={asked}
+            onAsked={() => setAsked(null)}
+            actions={{
+              onLocate,
+              onAddPoint: (place, body) =>
+                write(() =>
+                  api.addComment(projectPath, url, {
+                    view: 'all',
+                    /* The head the place was counted at: what the pointer said for a new-side line,
+                       else the head this page read. The server refuses if the change has moved past it. */
+                    commit: place.side === 'new' && place.commit ? place.commit : head!,
+                    path: place.path,
+                    side: place.side,
+                    line: place.line,
+                    ...(place.start !== place.line ? { startLine: place.start } : {}),
+                    body,
+                  }),
+                ),
+              onReword: (id, body) => write(() => api.reword(projectPath, url, id, body)),
+              onDrop: (id) => write(() => api.drop(projectPath, url, id)),
+              onKeep: (id) => write(() => api.keep(projectPath, url, id)),
+              onResolve: (id, resolved) => write(() => api.resolve(projectPath, url, id, resolved)),
+              onDropEvidence: (id) => write(() => api.dropEvidence(projectPath, url, id)),
+              onSummary: (summary) => write(() => api.setVerdict(projectPath, url, undefined, summary)),
+              onVerdict: (verdict) => write(() => api.setVerdict(projectPath, url, verdict, undefined)),
+              onConfirming: () => {
+                /* Asked only now: it is a subprocess, and whose login this is only matters to somebody about to post under it. */
+                api
+                  .login(url)
+                  .then(setLogin)
+                  .catch(() => setLogin(null))
+              },
+              onTake: (which, run) => write(() => api.takeProposal(projectPath, url, which, run)),
+              onSend: async (confirmed) => {
+                writes.current += 1
+                try {
+                  const made = await api.send(projectPath, url, confirmed)
+                  setDraft({ at: 'ok', value: made.draft })
+                  return made.report
+                } finally {
+                  writes.current += 1
+                  /* Whatever happened — including a refusal — the review on disk is the truth about what was posted. Read it. */
+                  reread()
+                }
+              },
+              onReplyReword: (id, body, todo) => write(() => api.rewordReply(projectPath, url, id, body, todo)),
+              onReplyDrop: (id) => write(() => api.dropReply(projectPath, url, id)),
+              onReplySend: (id, body) => write(() => api.sendReply(projectPath, url, id, body)),
+            }}
+          />
+        ) : null}
+      </section>
     </HoldingContext.Provider>
   )
 }
@@ -603,23 +389,4 @@ function safeHost(url: string): string {
   } catch {
     return ''
   }
-}
-
-function Totals({ files, closed, heldBack }: { files: FileDiff[]; closed: number; heldBack: number }) {
-  const sum = totals(files)
-  if (!files.length) return null
-  return (
-    <p className="flex flex-wrap items-center gap-1 text-[0.7rem] leading-4 text-muted-foreground">
-      <span>
-        {sum.files} {sum.files === 1 ? 'file' : 'files'}
-      </span>
-      <span className="rounded-sm bg-add px-1 text-add-mark">+{sum.added}</span>
-      <span className="rounded-sm bg-del px-1 text-del-mark">−{sum.removed}</span>
-      {closed ? (
-        <span className="min-w-0">
-          {`${closed} ${closed === 1 ? 'file is' : 'files are'} closed to start with, holding ${heldBack} lines. Open any of them below; nothing is missing from this list.`}
-        </span>
-      ) : null}
-    </p>
-  )
 }

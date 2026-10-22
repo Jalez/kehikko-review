@@ -4,9 +4,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-import { MAX_BODY, short, type Comment, type EvidenceKind, type Meta, type Severity } from '../../review/shape.ts'
+import { MAX_BODY, stateOf, type Comment, type EvidenceKind, type Meta, type PointState, type Severity } from '../../review/shape.ts'
 
 import { useHolding } from './holding.ts'
+import { codeLabel } from './where.ts'
 
 /** The small button every control in a narrow frame uses: a target, not a billboard. */
 export const SMALL = 'h-6 px-2 text-[0.7rem]'
@@ -141,136 +142,154 @@ export function Who({ by }: { by: Comment['by'] }) {
   )
 }
 
-/** Where a comment is, in the words of the frame it was written in. */
-export function place(comment: Comment): string {
-  const lines = comment.startLine !== undefined ? `${comment.startLine}–${comment.line}` : String(comment.line)
-  return `${comment.path}:${lines}${comment.side === 'old' ? ' (old)' : ''}`
-}
-
 /**
- * One draft comment: who wrote it, the words, and — while it is still a draft —
- * a way to change or remove it.
+ * One point of the review, as a card: its code reference (pressing it points Source and Diff at the
+ * lines), who wrote it and where it stands, its words, what a run said about it, the evidence
+ * attached to it, and — while it is a draft — Edit, Keep and Remove.
  *
- * A SENT comment is drawn the same and offers neither. It is on the tracker,
- * where people may have read and answered it; the copy here is a record of
- * what was said, and a record that can be edited is not one. The server
- * refuses both as well (`review/draft.ts`); this is the page not offering
- * what would be refused.
+ * A SENT point offers none of those. It is on the tracker, where people may have read and answered
+ * it; the copy here is a record of what was said, and a record that can be edited is not one. It can
+ * be marked resolved (and opened again). The server refuses the rest as well (`review/draft.ts`);
+ * this is the page not offering what would be refused.
  */
-export function CommentCard({
+export function PointCard({
   comment,
-  where,
   stale,
+  located,
+  evidence,
+  onLocate,
   onReword,
   onDrop,
-  onJump,
+  onKeep,
+  onResolve,
 }: {
   comment: Comment
-  /** Shown in the review panel, where the comment is away from its line. */
-  where?: string
-  /** Why this comment is not against the current code, when it is not. */
+  /** Why this point is not against the current code, when it is not. */
   stale?: string | null
+  /** What became of the last press on its code reference, when it was not taken. */
+  located?: string | null
+  /** The evidence attached to it, drawn small. */
+  evidence?: React.ReactNode
+  onLocate(): void
   onReword(id: string, body: string): Promise<void>
   onDrop(id: string): Promise<void>
-  onJump?: () => void
+  onKeep(id: string): Promise<void>
+  onResolve(id: string, resolved: boolean): Promise<void>
 }) {
-  /*
-   * A reword somebody was in the middle of when the page reloaded reopens — in the review panel's
-   * copy of the card (the one with `where`), which is drawn whatever the diff is showing; the copy
-   * beside the line is the same comment and would be a second box over the same words.
-   */
+  /* A reword somebody was in the middle of when the page reloaded reopens. */
   const holding = useHolding()
-  const [editing, setEditing] = useState(() => where !== undefined && holding.read(`reword:${comment.id}`) !== null)
-  /* Remove takes two presses. `confirm()` is not available to a framed page,
-     and one press on a small button in a narrow frame is too easy to make by
-     accident for something that deletes a paragraph. */
+  const [editing, setEditing] = useState(() => holding.read(`reword:${comment.id}`) !== null)
+  /* Remove takes two presses. `confirm()` is not available to a framed page, and one press on a
+     small button in a narrow frame is too easy to make by accident for something that deletes a
+     paragraph. */
   const [armed, setArmed] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const state = stateOf(comment)
+  const act = (does: Promise<void>) => {
+    setError(null)
+    does.catch((e: unknown) => {
+      setError(say(e))
+      setArmed(false)
+    })
+  }
 
   if (editing) {
     return (
       <Composer
-        label={`Reword the comment on ${place(comment)}`}
+        label={`Reword the point on ${codeLabel(comment)}`}
         initial={comment.body}
         saveLabel="Save"
         onSave={(body) => onReword(comment.id, body).then(() => setEditing(false))}
         onCancel={() => setEditing(false)}
-        held={{ target: `reword:${comment.id}`, aim: `a rewording of the comment on ${place(comment)}` }}
+        held={{ target: `reword:${comment.id}`, aim: `a rewording of the point on ${codeLabel(comment)}` }}
       />
     )
   }
 
   return (
-    <div
-      className={cn('flex flex-col gap-1 border-y bg-card px-2 py-1.5 font-sans text-[0.7rem] leading-4', comment.by === 'agent' && !comment.sent && 'border-l-2 border-l-agent')}
+    <article
+      className={cn(
+        'flex min-w-0 flex-col gap-1 rounded-md border bg-card px-2 py-1.5 font-sans text-[0.7rem] leading-4',
+        comment.by === 'agent' && state === 'draft' && 'border-l-2 border-l-agent',
+      )}
       data-comment={comment.id}
       data-sent={comment.sent ? 'yes' : 'no'}
+      data-state={state}
     >
-      <div className="flex flex-wrap items-center gap-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-1">
         <Who by={comment.by} />
-        {comment.sent ? (
-          <Badge variant="secondary" className="px-1.5 text-[0.65rem]">
-            {comment.sent.folded ? 'sent, in the summary' : 'sent'}
+        <Badge variant={state === 'draft' ? 'outline' : 'secondary'} className="px-1.5 text-[0.65rem]">
+          {STATE_WORD[state]}
+          {comment.sent?.folded ? ', in the summary' : ''}
+        </Badge>
+        {comment.meta ? (
+          <Badge variant="outline" className="px-1.5 text-[0.65rem]">
+            {SEVERITY_WORD[comment.meta.severity]}
           </Badge>
         ) : null}
-        {where ? (
-          /* A path is one unbroken string. `min-w-0` and `truncate` are what
-             stop it from sizing the row, and the row from sizing the page. */
-          <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground" title={where}>
-            {where}
-          </span>
-        ) : null}
-        {onJump ? (
-          <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[0.7rem]" onClick={onJump}>
-            show
-          </Button>
-        ) : null}
+        {/* A path is one unbroken string. `min-w-0` and `truncate` are what stop it from sizing the
+            row, and the row from sizing the page. */}
+        <button
+          type="button"
+          className="min-w-0 flex-1 truncate text-left font-mono text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
+          title={`Show ${comment.path} at ${comment.startLine !== undefined ? `lines ${comment.startLine}–${comment.line}` : `line ${comment.line}`} in Source and Diff`}
+          data-code={comment.id}
+          onClick={onLocate}
+        >
+          {codeLabel(comment)}
+        </button>
         {comment.sent?.url ? (
           <a className="underline underline-offset-2" href={comment.sent.url} target="_blank" rel="noopener noreferrer">
             on the tracker
           </a>
         ) : null}
       </div>
+      {located ? <p className="text-muted-foreground" data-testid="located">{located}</p> : null}
       {stale ? <p className="text-del-mark">{stale}</p> : null}
-      <p className="whitespace-pre-wrap text-[0.75rem] leading-snug">{comment.body}</p>
-      {comment.meta && where !== undefined ? <Point meta={comment.meta} /> : null}
+      {comment.quote.trim() ? (
+        <pre className="max-h-24 min-w-0 overflow-auto rounded-sm bg-muted px-1.5 py-1 font-mono text-[0.65rem] leading-4 whitespace-pre">{comment.quote}</pre>
+      ) : null}
+      <p className="whitespace-pre-wrap text-[0.75rem] leading-snug [overflow-wrap:anywhere]">{comment.body}</p>
+      {comment.meta ? <Point meta={comment.meta} /> : null}
+      {evidence}
       {error ? (
         <p role="alert" className="rounded-md border border-del-mark/50 bg-del px-2 py-1">
           {error}
         </p>
       ) : null}
-      {comment.sent ? null : (
-        <div className="flex flex-wrap items-center justify-end gap-1">
-          <Button type="button" variant="ghost" size="sm" className={SMALL} onClick={() => setEditing(true)}>
-            Edit
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        {comment.sent ? (
+          <Button type="button" variant="ghost" size="sm" className={SMALL} onClick={() => act(onResolve(comment.id, !comment.resolved))}>
+            {comment.resolved ? 'Open again' : 'Mark resolved'}
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className={cn(SMALL, armed && 'text-destructive')}
-            onBlur={() => setArmed(false)}
-            onClick={() => {
-              if (!armed) return setArmed(true)
-              setError(null)
-              onDrop(comment.id).catch((e: unknown) => {
-                setError(say(e))
-                setArmed(false)
-              })
-            }}
-          >
-            {armed ? 'Remove it?' : 'Remove'}
-          </Button>
-        </div>
-      )}
-    </div>
+        ) : (
+          <>
+            <Button type="button" variant="ghost" size="sm" className={SMALL} onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+            {comment.by === 'agent' && !comment.kept ? (
+              <Button type="button" variant="outline" size="sm" className={SMALL} onClick={() => act(onKeep(comment.id))}>
+                Keep
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(SMALL, armed && 'text-destructive')}
+              onBlur={() => setArmed(false)}
+              onClick={() => (armed ? act(onDrop(comment.id)) : setArmed(true))}
+            >
+              {armed ? 'Remove it?' : 'Remove'}
+            </Button>
+          </>
+        )}
+      </div>
+    </article>
   )
 }
 
-/** A comment's frame, as a few words: which diff its line numbers are from. */
-export function frameOf(comment: Comment): string {
-  return comment.view === 'all' ? `all changes at ${short(comment.commit)}` : `commit ${short(comment.commit)}`
-}
+const STATE_WORD: Record<PointState, string> = { draft: 'draft', kept: 'kept', sent: 'sent', resolved: 'resolved' }
 
 const SEVERITY_WORD: Record<Severity, string> = { blocking: 'Blocking', risk: 'Risk', nice: 'Nice to have' }
 const EVIDENCE_WORD: Record<EvidenceKind, string> = { line: 'Line', test: 'Test', doc: 'Document', practice: 'Practice' }
@@ -288,15 +307,12 @@ export function httpsOnly(ref: string): string | null {
 /**
  * What a review run says about one of its points, under the words that would be posted: how bad,
  * whether the judge ruled it required, why, on which evidence, and the case made against it. In
- * words, never colour alone. Shown in the review panel's copy of the card, where there is room.
+ * words, never colour alone. The severity is on the card's first row.
  */
 export function Point({ meta }: { meta: Meta }) {
   return (
     <div data-testid="point" className="flex min-w-0 flex-col gap-0.5 rounded-md border bg-background px-2 py-1 text-[0.7rem] leading-4">
       <p className="flex min-w-0 flex-wrap items-center gap-1">
-        <Badge variant="outline" className="px-1.5 text-[0.65rem]">
-          {SEVERITY_WORD[meta.severity]}
-        </Badge>
         <Badge variant={meta.ruling === 'required' ? 'default' : 'secondary'} className="px-1.5 text-[0.65rem]">
           {meta.ruling === 'required' ? 'Required' : 'Optional'}
         </Badge>
@@ -320,7 +336,7 @@ export function Point({ meta }: { meta: Meta }) {
           )
         })}
       </ul>
-      {meta.challenge ? <p className="[overflow-wrap:anywhere]">Challenged: {meta.challenge}</p> : null}
+      {meta.challenge ? <p className="[overflow-wrap:anywhere]">Challenge: {meta.challenge}</p> : null}
       {meta.checklist?.length ? <p className="text-muted-foreground">Checklist: {meta.checklist.join(', ')}</p> : null}
       <p className="text-muted-foreground">From review run {meta.run}.</p>
     </div>
