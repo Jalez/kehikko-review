@@ -4,5 +4,12 @@
 # a directory, and `node_modules/` would let the link be committed.
 node_modules
 
-# There is no build; Vite serves the page. A stray dist is a second, stale answer.
+# The build (`bun run build`). Served only when its stamp is the commit checked
+# out (run.sh, serve.ts); a checked-in copy would be a second answer to what the
+# page says.
 dist
+
+# Written by `build.ts` for the length of a build and taken away after. Left
+# behind by a killed build, it would be what Vite answers at `/`, with no
+# ticket in it.
+/index.html
