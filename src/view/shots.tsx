@@ -5,6 +5,7 @@ import type { Api } from '@/wire/api'
 
 import { locate } from '../../forge/locate.ts'
 import { allowedImage, type Shot, type Shots } from '../../review/shots.ts'
+import { OutLink } from './out-link.tsx'
 
 /**
  * The Before / after view: the pictures the change's author posted, before beside after.
@@ -128,9 +129,7 @@ function Figure({ shot, label, src, forge }: { shot: Shot; label: string; src: s
         </p>
       )}
       {src ? (
-        <a className="underline underline-offset-2" href={src} target="_blank" rel="noopener noreferrer">
-          open
-        </a>
+        <OutLink href={src}>open</OutLink>
       ) : null}
     </figure>
   )

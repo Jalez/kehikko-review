@@ -158,7 +158,7 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   partless: 'Shows the review of the one change a person selected, which is always in hand.',
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,
-    uses: ['trackers:read', 'location:set'],
+    uses: ['trackers:read', 'location:set', 'address:open'],
     storage: true,
     prompt: false,
     /* The skills this module offers, for the origin it is on (`skills.ts`). */

@@ -17,6 +17,7 @@ import { HoldingContext, drafts, type Holding } from './holding.ts'
 import { ShotsView } from './shots.tsx'
 import { askOf, commentAsked, locationOf, placeOf, type Place } from './where.ts'
 import { heldAtProject } from '../wire/held-at-project.ts'
+import { OutLink } from './out-link.tsx'
 
 /**
  * One change, being reviewed: its header, and the review of it as a document.
@@ -301,9 +302,7 @@ export function ChangeReview({
               </>
             ) : null}
             {/* `noreferrer` as well as `noopener`: a referrer would tell the tracker which host somebody is reading from. */}
-            <a className="underline underline-offset-2" href={url} target="_blank" rel="noopener noreferrer">
-              open on the tracker
-            </a>
+            <OutLink href={url}>open on the tracker</OutLink>
           </p>
         </header>
 

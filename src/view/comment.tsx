@@ -8,6 +8,7 @@ import { MAX_BODY, stateOf, type Comment, type EvidenceKind, type Meta, type Poi
 
 import { useHolding } from './holding.ts'
 import { codeLabel } from './where.ts'
+import { OutLink } from './out-link.tsx'
 
 /** The small button every control in a narrow frame uses: a target, not a billboard. */
 export const SMALL = 'h-6 px-2 text-[0.7rem]'
@@ -239,9 +240,7 @@ export function PointCard({
           {codeLabel(comment)}
         </button>
         {comment.sent?.url ? (
-          <a className="underline underline-offset-2" href={comment.sent.url} target="_blank" rel="noopener noreferrer">
-            on the tracker
-          </a>
+          <OutLink href={comment.sent.url}>on the tracker</OutLink>
         ) : null}
       </div>
       {located ? <p className="text-muted-foreground" data-testid="located">{located}</p> : null}
@@ -325,9 +324,7 @@ export function Point({ meta }: { meta: Meta }) {
             <li key={at} className="min-w-0 [overflow-wrap:anywhere]">
               {EVIDENCE_WORD[one.kind]}:{' '}
               {link ? (
-                <a className="underline underline-offset-2" href={link} target="_blank" rel="noopener noreferrer">
-                  {one.ref}
-                </a>
+                <OutLink href={link}>{one.ref}</OutLink>
               ) : (
                 <span className="font-mono">{one.ref}</span>
               )}

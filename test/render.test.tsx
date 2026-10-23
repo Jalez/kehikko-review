@@ -320,6 +320,21 @@ describe('the review, as a document', () => {
     expect(header('showing')).toMatchObject({ kind: 'switch', value: 'review' })
   })
 
+  test('with a host that takes addresses, "open on the tracker" hands the change to the canvas instead of a new tab', async () => {
+    const handed: string[] = []
+    await opened({}, { openAddress: (url) => (handed.push(url), Promise.resolve({ outcome: 'shown', why: '' })) })
+    const link = screen.getByText('open on the tracker') as HTMLAnchorElement
+    expect(fireEvent.click(link)).toBe(false)
+    expect(handed).toEqual([GH_URL])
+  })
+
+  test('without one, "open on the tracker" is an ordinary new-tab link', async () => {
+    await opened()
+    const link = screen.getByText('open on the tracker') as HTMLAnchorElement
+    expect(link.target).toBe('_blank')
+    expect(fireEvent.click(link)).toBe(true)
+  })
+
   test('no diff is drawn here any more: no file, no line gutter, no commit picker', async () => {
     const { container } = await opened({ comments: [comment({ id: 'c-1' })] })
     expect(container.querySelector('[data-file]')).toBeNull()

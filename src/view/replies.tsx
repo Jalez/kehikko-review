@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { MAX_BODY, type ReplyDraft } from '../../review/shape.ts'
 
 import { SMALL, Who } from './comment.tsx'
+import { OutLink } from './out-link.tsx'
 
 /**
  * Replies to the review comments the person received on their own change (`/review-reply` drafts
@@ -92,9 +93,7 @@ function ReplyCard({
           {reply.where}
         </span>
         {reply.sent?.url ? (
-          <a className="underline underline-offset-2" href={reply.sent.url} target="_blank" rel="noopener noreferrer">
-            on the tracker
-          </a>
+          <OutLink href={reply.sent.url}>on the tracker</OutLink>
         ) : null}
       </div>
       <blockquote className="border-l-2 pl-2 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
