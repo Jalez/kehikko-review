@@ -8,6 +8,8 @@
 #     vite.config.ts acts on it: takes it when free, honours $PORT from a host,
 #     and moves (rewriting the registration) when something else has it.
 #   - `exec` in the foreground, so the pid a host holds is the one that stops it.
+#   - The built page (`serve.ts`) when `dist/` is stamped with this checkout's
+#     commit, Vite otherwise: see the bottom of this file.
 #
 # It does not register. That is `bun run register`, a person's decision.
 set -euo pipefail
@@ -32,6 +34,22 @@ if [ ! -d node_modules ] || [ ! -f "$INSTALLED" ] || [ bun.lock -nt "$INSTALLED"
   touch "$INSTALLED"
   # Rebuild Vite's pre-bundle rather than trust one made from the old packages.
   VITE_FORCE=--force
+fi
+
+# The built page, when its stamp is this checkout's HEAD (`bun run build`, which a
+# host runs at install and update, never at start). Read here, in the shell, so
+# choosing costs a `git rev-parse` and not a process. A checkout somebody edits
+# has no stamp, or one of an older commit, and gets Vite; a stale build is never
+# served (`serve.ts` refuses one too, with a 503 that says why).
+BUILT=
+if [ -f dist/.kehikot-built ] && [ -f dist/index.html ]; then
+  read -r BUILT < dist/.kehikot-built || true
+fi
+if [ -n "$BUILT" ] && [ "$BUILT" = "$(git rev-parse HEAD 2>/dev/null)" ]; then
+  exec bun run serve.ts
+fi
+if [ -n "$BUILT" ]; then
+  echo "review: dist/ is a build of ${BUILT:0:7}, not of this checkout, so Vite serves the page. \`bun run build\` would make it current." >&2
 fi
 
 exec bunx vite $VITE_FORCE

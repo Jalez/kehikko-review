@@ -304,19 +304,24 @@ function response() {
 describe('the middleware', () => {
   test('without the header the request is not this route’s: it goes on, unread', async () => {
     const w = await ready()
-    let went = false
     const { res, out } = response()
-    factoryHandler(w.deps, () => w.file)(request('POST', { 'content-type': 'application/json' }, { project: w.dir }), res, () => {
-      went = true
-    })
-    expect(went).toBe(true)
+    const asked = request('POST', { 'content-type': 'application/json' }, { project: w.dir })
+    const read: string[] = []
+    const on = asked.on.bind(asked)
+    ;(asked as unknown as { on: typeof on }).on = ((event: string, listener: () => void) => {
+      read.push(event)
+      return on(event as 'end', listener)
+    }) as typeof on
+    const went = Promise.withResolvers<void>()
+    factoryHandler(w.deps, () => w.file)(asked, res, () => went.resolve())
+    await went.promise
     expect(out.status).toBe(0)
+    /* Nothing listened for the body: the doors and Vite get it whole. */
+    expect(read).toEqual([])
     /* Another path, header or not, is not looked at either. */
-    let other = false
-    factoryHandler(w.deps, () => w.file)({ ...request('POST', { [KEY_HEADER]: w.key }), url: '/api/send' }, res, () => {
-      other = true
-    })
-    expect(other).toBe(true)
+    const other = Promise.withResolvers<void>()
+    factoryHandler(w.deps, () => w.file)({ ...request('POST', { [KEY_HEADER]: w.key }), url: '/api/send' }, res, () => other.resolve())
+    await other.promise
   })
 
   test('a browser asking — another origin or this app’s own page — is refused', async () => {

@@ -35,7 +35,7 @@ import {
 } from './review/draft.ts'
 import { mimeOf, takeEvidence } from './evidence.ts'
 import { postReply, threads as readThreads, type Thread } from './forge/threads.ts'
-import { skillAt } from './skills.ts'
+import { isSkillPath, skillAt } from './skills.ts'
 import { keyOf } from './review/key.ts'
 import { shotsOf } from './review/shots.ts'
 import { DEFAULT_DIFF_LINES, MAX_DIFF_LINES, printComment, printDiff, printDraft, printFiles, printThreads } from './review/print.ts'
@@ -113,6 +113,13 @@ const NO_TICKET =
 
 /** What this process is built from and when it started; `doors()` says it wherever a build is said. */
 export const BUILD = establishBuild({ version: VERSION, dir: import.meta.dirname })
+
+/**
+ * Which paths are the doors': the protocol's own (`/healthz`, `/mcp`, `/api/*`) and the skills'
+ * SKILL.md files (`/kehikot/skills/<name>.md`), all answered by `answer`. Said once, for both
+ * servers: `doors()` in vite.config.ts and `run` in serve.ts.
+ */
+export const ours = (path: string): boolean => path === '/healthz' || path === '/mcp' || path.startsWith('/api/') || isSkillPath(path)
 
 export type { Reply }
 

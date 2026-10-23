@@ -1,4 +1,13 @@
-import { DOOR_PROJECT_SAYS, asker, readJsonBody, resolveDoorProject, type DoorRequest, type DoorResponse, type Reply } from 'kehikot-module-protocol/serve'
+import {
+  DOOR_PROJECT_SAYS,
+  beforeDoors,
+  beforeHandler,
+  readJsonRequest,
+  resolveDoorProject,
+  type Before,
+  type DoorHandler,
+  type Reply,
+} from 'kehikot-module-protocol/serve'
 
 import { REAL, bad, changeFor, deliver, underLock, type Deps } from '../doors.ts'
 import type { Target } from '../forge/locate.ts'
@@ -112,48 +121,44 @@ export async function factorySend(deps: Deps, carried: string | null, body: Reco
   return { status: 200, body: { ok: true, report: said.report, ...(at.movedFrom ? { said: DOOR_PROJECT_SAYS.followed(at.movedFrom, at.path) } : {}) } }
 }
 
-const header = (headers: DoorRequest['headers'], name: string): string | null => {
-  const value = headers[name]
-  if (typeof value === 'string') return value || null
-  if (Array.isArray(value)) return value[0] || null
-  return null
-}
-
-function reply(response: DoorResponse, answer: Reply): void {
-  response.statusCode = answer.status
-  response.setHeader('content-type', 'application/json; charset=utf-8')
-  response.setHeader('cache-control', 'no-store')
-  response.end(JSON.stringify(answer.body))
+/** A reply as the JSON answer it is: never cached, like every door's. */
+function json(answer: Reply): Response {
+  return new Response(JSON.stringify(answer.body), {
+    status: answer.status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  })
 }
 
 /**
- * The middleware: placed before the protocol's doors, so it sees the header they do not pass on.
- * `file` says where the key is, read per request so a key replaced on disk is the one compared.
+ * Factory's door as ONE function from a request to an answer, asked before the protocol's doors on
+ * both servers: on Vite by `factoryDoor()` below, and on the built page by `run({ before })` in
+ * serve.ts — so the two cannot disagree about who may send. `undefined` is "not this route": the
+ * request goes on to the doors unread, which answer it 404. `file` says where the key is, read per
+ * request so a key replaced on disk is the one compared.
  */
-export function factoryHandler(deps: Deps = REAL, file: () => string = () => keyFile()) {
-  return (request: DoorRequest & { method?: string }, response: DoorResponse, next: (error?: unknown) => void): void => {
-    const path = new URL(request.url ?? '/', 'http://127.0.0.1').pathname
-    const carried = header(request.headers, KEY_HEADER)
-    if (path !== FACTORY_PATH || !carried) return next()
-    if (asker(request.headers) !== 'program') {
-      return reply(response, bad('This door answers Factory, a program on this computer, and nothing in a browser.', 403))
-    }
-    if ((request.method ?? 'GET').toUpperCase() !== 'POST') return reply(response, bad('This door takes POST.', 405))
-    void readJsonBody(request)
-      .then(async (read) => reply(response, read.ok ? await factorySend(deps, carried, read.body, file()) : bad(read.error, read.status)))
-      .catch(next)
+export function factoryBefore(deps: Deps = REAL, file: () => string = () => keyFile()): Before {
+  return async (request, { asker, url }) => {
+    const carried = request.headers.get(KEY_HEADER) || null
+    if (url.pathname !== FACTORY_PATH || !carried) return undefined
+    if (asker !== 'program') return json(bad('This door answers Factory, a program on this computer, and nothing in a browser.', 403))
+    if (request.method.toUpperCase() !== 'POST') return json(bad('This door takes POST.', 405))
+    const read = await readJsonRequest(request)
+    return json(read.ok ? await factorySend(deps, carried, read.body, file()) : bad(read.error, read.status))
   }
+}
+
+/** The same door as node middleware, `(request, response, next)`: what Vite mounts. */
+export function factoryHandler(deps: Deps = REAL, file: () => string = () => keyFile()): DoorHandler {
+  return beforeHandler(factoryBefore(deps, file))
+}
+
+/** Make the key on the first start, on either server; a start without one says so and goes on. */
+export function startFactory(): void {
+  const made = ensureKey()
+  if (!made.ok) console.error(`kehikot.review: Factory cannot send reviews: ${made.error}`)
 }
 
 /** The Vite plugin: makes the key on the first start, then answers Factory's send. Before `doors()` in vite.config.ts. */
 export function factoryDoor(deps: Deps = REAL) {
-  return {
-    name: 'kehikot-review-factory-door',
-    apply: 'serve' as const,
-    configureServer(server: { middlewares: { use(handler: ReturnType<typeof factoryHandler>): unknown } }) {
-      const made = ensureKey()
-      if (!made.ok) console.error(`kehikot.review: Factory cannot send reviews: ${made.error}`)
-      server.middlewares.use(factoryHandler(deps))
-    },
-  }
+  return beforeDoors(factoryBefore(deps), { name: 'kehikot-review-factory-door', setup: startFactory })
 }
