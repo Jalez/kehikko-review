@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type MutableRefObject } from 'react'
 
-import type { CodeLocation, HeaderItemInput, LocationIntent, LocationSetResult, SharedLocation } from 'kehikot-module-protocol'
+import type { AddressOpenResult, CodeLocation, HeaderItemInput, LocationIntent, LocationSetResult, SharedLocation } from 'kehikot-module-protocol'
 
 import { useHost, type Host as ProtocolHost, type Where } from 'kehikot-module-protocol/client/react'
 
@@ -57,6 +57,11 @@ export interface Host {
    * Diff scrolls there. `null` when nothing frames the page or the host did not answer; never rejects.
    */
   locate?(location: CodeLocation | null, intent?: LocationIntent): Promise<LocationSetResult | null>
+  /**
+   * Hand a web address to the canvas (`address.open`, protocol 2.16.0), for a module that shows
+   * pages to open. Absent when the host does not answer it: links then open in a new tab.
+   */
+  openAddress?(url: string): Promise<AddressOpenResult | null>
   /** Ask the host for something (a method from the protocol). Rejects when unhosted or refused. */
   request: ProtocolHost['request']
   /** Declare the header items, whole (`kehikot.header`). Absent in a test that draws no header. */
@@ -80,6 +85,9 @@ export function useKehikot(): Host {
   /* `selection` is the same array for as long as the host repeats the same selection. */
   const { selection } = host
   const trackerAt = host.context?.tracker?.at ?? null
+  /* Only when the greeting said the host answers it: an older host keeps the plain links. */
+  const handsAddresses = host.where === 'hosted' && host.answers?.includes('address.open') === true
+  const hostOpenAddress = host.openAddress
 
   return useMemo(
     () => ({
@@ -94,10 +102,11 @@ export function useKehikot(): Host {
       request: host.request,
       location: host.location,
       locate: host.locate,
+      ...(handsAddresses ? { openAddress: (url: string) => hostOpenAddress(url) } : {}),
       header: host.header,
       presses,
       pressed,
     }),
-    [host.where, host.request, host.location, host.locate, host.header, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
+    [host.where, host.request, host.location, host.locate, handsAddresses, hostOpenAddress, host.header, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
   )
 }

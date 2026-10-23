@@ -9,6 +9,7 @@ import { useChanges } from '@/live/use-changes'
 import { ChangeReview } from '@/view/change-review'
 import { api as realApi, type Api } from '@/wire/api'
 import { useKehikot, type Host } from '@/wire/use-kehikot'
+import { OpenAddressContext } from '@/view/out-link'
 
 export function App() {
   return <Screen host={useKehikot()} />
@@ -79,6 +80,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
         />
       ) : null}
 
+      <OpenAddressContext.Provider value={host.openAddress ?? null}>
       <div hidden={cover !== null} className={cover ? undefined : 'contents'}>
       {host.where === 'hosted' && !host.selection.length ? (
         <Note>
@@ -117,6 +119,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
         ? others.map((ref) => <Other key={ref} refName={ref} seen={Object.hasOwn(seen, ref) ? seen[ref] : undefined} />)
         : null}
       </div>
+      </OpenAddressContext.Provider>
     </main>
   )
 }

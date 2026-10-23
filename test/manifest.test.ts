@@ -24,10 +24,11 @@ describe('the manifest', () => {
     expect(MANIFEST.mcp?.url).toBe('/mcp')
   })
 
-  test('asks a host for the tracker reading and for pointing at code, and nothing else, and says what it reacts to', () => {
+  test('asks a host for the tracker reading, for pointing at code and for opening links, and nothing else, and says what it reacts to', () => {
     /* Reaching GitHub and GitLab is not a capability: this module's own server
-       runs the person's `gh` and `glab`. `location:set` is a point's code reference. */
-    expect(MANIFEST.declares.uses).toEqual(['trackers:read', 'location:set'])
+       runs the person's `gh` and `glab`. `location:set` is a point's code reference;
+       `address:open` hands a link to the canvas (protocol 2.16.0). */
+    expect(MANIFEST.declares.uses).toEqual(['trackers:read', 'location:set', 'address:open'])
     expect(MANIFEST.reacts).toEqual(['selection', 'tracker', 'location'])
     expect(MANIFEST.dataVersion).toBe(2)
     expect(MANIFEST.modes).toEqual([{ id: 'review', label: 'Review', scope: 'epic' }])
