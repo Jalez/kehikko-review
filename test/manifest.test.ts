@@ -31,7 +31,7 @@ describe('the manifest', () => {
     expect(MANIFEST.declares.uses).toEqual(['trackers:read', 'location:set', 'address:open'])
     expect(MANIFEST.reacts).toEqual(['selection', 'tracker', 'location'])
     expect(MANIFEST.dataVersion).toBe(2)
-    expect(MANIFEST.modes).toEqual([{ id: 'review', label: 'Review', scope: 'epic' }])
+    expect(MANIFEST.modes).toEqual([{ id: 'review', label: 'Review', scope: 'part', scopeSays: 'the review of the one change picked out' }])
   })
 
   test('tells an arriving agent that it drafts and a person sends', () => {

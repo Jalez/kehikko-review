@@ -133,7 +133,10 @@ export const MANIFEST: Manifest = manifestSchema.parse({
     + 'it. Everything you write is a DRAFT; only the person sends, from the page. Do not post review comments with '
     + '`gh` or `glab` yourself when a person is reviewing here.',
   entry: '/app',
-  modes: [{ id: 'review', label: 'Review', scope: 'epic' }],
+  /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
+  modes: [
+    { id: 'review', label: 'Review', scope: 'part', scopeSays: 'the review of the one change picked out' },
+  ],
   mcp: {
     url: '/mcp',
     transport: 'http',
