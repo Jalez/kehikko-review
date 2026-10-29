@@ -32,18 +32,15 @@ import { OutLink } from './out-link.tsx'
  *
  * - The CHANGE (what it is, its head, its commits) — from the tracker, through this app's server.
  *   Asked when the page opens on a change and again when the host's reading says the head moved.
- * - The REVIEW — from a file in the project. Re-read when the window regains focus and on a slow
- *   interval, because an agent writes to the same file over MCP and a point it adds should appear
- *   without anybody reloading.
+ * - The REVIEW — from a file in the project. Re-read whenever this app's server says it changed
+ *   (`api.draftChanges`: an agent's MCP write, Factory's send, a hand edit), and when the window
+ *   regains focus, so a point an agent adds appears without anybody reloading. Never on a clock.
  *
  * A failure of one is drawn where that one would have been, in the tracker's own words, and does not
  * take the other with it.
  */
 
 type Loaded<T> = { at: 'loading' } | { at: 'error'; error: string } | { at: 'ok'; value: T }
-
-/** How often the review is re-read while the page is open. Slow: it is a file read, and focus catches the common case. */
-const DRAFT_EVERY_MS = 20_000
 
 const say = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -168,15 +165,15 @@ export function ChangeReview({
 
   useEffect(() => {
     setDraft({ at: 'loading' })
-    reread()
     if (!projectPath) return
-    const timer = setInterval(reread, DRAFT_EVERY_MS)
+    /* The stream says so once as it opens, so this is also the first read; then at every write. */
+    const stop = api.draftChanges(projectPath, url, reread)
     window.addEventListener('focus', reread)
     return () => {
-      clearInterval(timer)
+      stop()
       window.removeEventListener('focus', reread)
     }
-  }, [reread, projectPath])
+  }, [api, url, reread, projectPath])
 
   /* The page's Try again, after its own server did not answer: what failed is asked again. */
   const failed = useRef(false)

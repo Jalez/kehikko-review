@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 import { doors, originFor, serves } from 'kehikot-module-protocol/serve'
 import { defineConfig, type Plugin } from 'vite'
 
-import { BUILD, MANIFEST, TICKET, answer, ours } from './doors.ts'
+import { BUILD, MANIFEST, TICKET, answer, stream, ours } from './doors.ts'
 import { factoryDoor } from './factory/door.ts'
 import { ID, PREFERRED_PORT, servingAt } from './manifest.ts'
 
@@ -60,6 +60,7 @@ export default defineConfig({
     doors({
       manifest: MANIFEST,
       answer,
+      stream,
       build: BUILD,
       page: { title: 'Review', ticket: TICKET },
       /* The skills' SKILL.md files (`/kehikot/skills/<name>.md`) are answered by `answer` too. */

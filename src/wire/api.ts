@@ -1,5 +1,5 @@
 import type { SharedLocation } from 'kehikot-module-protocol'
-import { answered, ask } from 'kehikot-module-protocol/client'
+import { answered, ask, subscribe } from 'kehikot-module-protocol/client'
 
 import type { Target } from '../../forge/locate.ts'
 import type { Commit, Described } from '../../forge/read.ts'
@@ -51,6 +51,13 @@ export interface Confirmed {
 export interface Api {
   change(url: string): Promise<ChangeRead>
   draft(projectPath: string, url: string): Promise<Draft>
+  /**
+   * Hear when the review changed: once as the stream opens (and again each time it reopens, after a
+   * drop or when the page is shown again), then at every write — the person's, an agent's, Factory's
+   * send, or a hand edit of the file. Never on a clock, and nothing while the page is hidden. Returns
+   * the function that stops it.
+   */
+  draftChanges(projectPath: string, url: string, onChange: () => void): () => void
   /** Whose login a send would go out under, or null when the CLI would not say. */
   login(url: string): Promise<string | null>
   addComment(projectPath: string, url: string, input: CommentInput): Promise<Draft>
@@ -96,6 +103,7 @@ const post = async (path: string, body: Record<string, unknown>): Promise<Body> 
 export const api: Api = {
   change: async (url) => (await get('change', { url })) as unknown as ChangeRead,
   draft: async (projectPath, url) => (await get('draft', { projectPath, url })).draft as Draft,
+  draftChanges: (projectPath, url, onChange) => subscribe('./api/draft/events', () => onChange(), { query: { projectPath, url }, probe: true }),
   login: async (url) => ((await get('login', { url })).login as string | null) ?? null,
   addComment: async (projectPath, url, input) => (await post('comment', { projectPath, url, ...input })).draft as Draft,
   reword: async (projectPath, url, id, body) => (await post('comment/reword', { projectPath, url, id, body })).draft as Draft,

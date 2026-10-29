@@ -217,8 +217,11 @@ None.
 - **State** is `draft`, `kept`, `sent` or `resolved`, and agrees with the lines
   under it (`Kept:`, `Sent:`, `Resolved:`), or the file is refused.
 
-The page re-reads the review when the window regains focus and every twenty
-seconds, so a point an agent adds appears without a reload. Bounds: 10,000
+The page re-reads the review when this app's server says it changed (every
+write — the page's, an agent's, Factory's send — and a hand edit of the file,
+over one held stream that is closed while the page is hidden) and when the
+window regains focus, so a point an agent adds appears at once, without a
+reload. It never re-reads on a clock. Bounds: 10,000
 characters a point, 20,000 the summary, 200 unsent points, 200 lines a range,
 60 pieces of evidence (a screenshot at most 10 MB, a log 1 MB).
 
