@@ -151,12 +151,20 @@ function fakeApi(start: Partial<Draft> = {}) {
     reworded: [] as string[][],
     taken: [] as string[][],
     shots: 0,
+    draftReads: 0,
   }
   const state = { draft: { ...emptyDraft(changeOf(target)), ...start } as Draft }
+  /* As the stream does: once as it opens, then at each change the test sends. */
+  const streams: (() => void)[] = []
   let n = state.draft.comments.length
   const api: Api = {
     change: () => Promise.resolve(change),
-    draft: () => Promise.resolve(state.draft),
+    draft: () => (calls.draftReads++, Promise.resolve(state.draft)),
+    draftChanges: (_p, _u, onChange) => {
+      streams.push(onChange)
+      onChange()
+      return () => void streams.splice(streams.indexOf(onChange), 1)
+    },
     login: () => Promise.resolve('Jalez'),
     addComment: (_p, _u, input) => {
       calls.added.push(input)
@@ -234,7 +242,7 @@ function fakeApi(start: Partial<Draft> = {}) {
       return Promise.resolve({ draft: state.draft, report: REPORT })
     },
   }
-  return { api, calls, state }
+  return { api, calls, state, streams }
 }
 
 /** The page, once the change and the review have both arrived. */
@@ -997,5 +1005,33 @@ describe('the Before / after view', () => {
     /* And back. */
     expect(press('showing', 'review')).toBe(true)
     await waitFor(() => expect(document.querySelector('[aria-label="The review"]')).toBeTruthy())
+  })
+})
+
+describe('the review is told when it changed, never asked on a clock', () => {
+  test('one read as the stream opens, no interval, and another only when the server says so', async () => {
+    const realInterval = globalThis.setInterval
+    let intervals = 0
+    globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => (intervals++, realInterval(...args))) as typeof setInterval
+    try {
+      const made = fakeApi()
+      render(<Screen host={host()} api={made.api} />)
+      await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 50))))
+      /* Counted before `waitFor`, which keeps an interval of its own. */
+      expect(intervals).toBe(0)
+      await screen.findByRole('article', { name: 'The review' })
+      expect(made.streams).toHaveLength(1)
+      expect(made.calls.draftReads).toBe(1)
+
+      /* An agent adds a point over MCP; the server says the review changed; the page reads it once. */
+      made.state.draft = { ...made.state.draft, comments: [...made.state.draft.comments, comment({ id: 'c-agent', by: 'agent', body: 'From an agent.' })] }
+      await act(async () => made.streams.forEach((change) => change()))
+      expect(made.calls.draftReads).toBe(2)
+      await waitFor(() => expect(card('c-agent')).toBeTruthy())
+      cleanup()
+      expect(made.streams).toHaveLength(0)
+    } finally {
+      globalThis.setInterval = realInterval
+    }
   })
 })

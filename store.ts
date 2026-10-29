@@ -4,6 +4,7 @@ import { isAbsolute, join } from 'node:path'
 import { DATA_FILE, kehikotDir, moduleDir, moduleFile, within } from 'kehikot-module-protocol'
 
 import type { Target } from './forge/locate.ts'
+import { changed } from './live.ts'
 import { ID } from './manifest.ts'
 import { emptyDraft, readDraft, type Changed } from './review/draft.ts'
 import { keyOf } from './review/key.ts'
@@ -104,6 +105,8 @@ export function changeDraft(
   if (!files.ok) return files
   writeAtomically(files.value.md, writeReview(next.draft, files.value.key))
   for (const file of next.gone ?? []) forgetProofFile(files.value, file)
+  /* A page following this review is told, rather than left to ask (`live.ts`). */
+  changed(files.value.root, files.value.key)
   return { ok: true, value: next.draft }
 }
 

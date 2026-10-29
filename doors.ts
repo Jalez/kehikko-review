@@ -119,6 +119,9 @@ export const BUILD = establishBuild({ version: VERSION, dir: import.meta.dirname
  * SKILL.md files (`/kehikot/skills/<name>.md`), all answered by `answer`. Said once, for both
  * servers: `doors()` in vite.config.ts and `run` in serve.ts.
  */
+/** The page's stream: told when the review changed, so it never asks on a clock (`live.ts`). */
+export { stream } from './live.ts'
+
 export const ours = (path: string): boolean => path === '/healthz' || path === '/mcp' || path.startsWith('/api/') || isSkillPath(path)
 
 export type { Reply }

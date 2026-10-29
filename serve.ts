@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { run } from 'kehikot-module-protocol/run'
 
-import { BUILD, MANIFEST, TICKET, answer, ours } from './doors.ts'
+import { BUILD, MANIFEST, TICKET, answer, ours, stream } from './doors.ts'
 import { factoryBefore, startFactory } from './factory/door.ts'
 import { ID, PREFERRED_PORT, servingAt } from './manifest.ts'
 
@@ -27,6 +27,7 @@ const running = await run({
   dir: import.meta.dirname,
   manifest: MANIFEST,
   answer,
+  stream,
   build: BUILD,
   ticket: TICKET,
   before: factoryBefore(),
