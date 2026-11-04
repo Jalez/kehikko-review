@@ -1028,6 +1028,37 @@ describe('the Before / after view', () => {
   })
 })
 
+describe('the view is kept for this container', () => {
+  test('a kept Before / after is what shows, and pressing Review keeps that, the other kept fields untouched', async () => {
+    let kept: unknown = { showing: 'shots', other: 1 }
+    const wrote: [unknown, number | undefined][] = []
+    render(
+      <Screen
+        host={host({
+          kept,
+          read: () => ({ kept }) as ReturnType<NonNullable<Host['read']>>,
+          remember: ((next: unknown, after?: number) => {
+            kept = next
+            wrote.push([next, after])
+          }) as NonNullable<Host['remember']>,
+        })}
+        api={fakeApi().api}
+      />,
+    )
+    /* Never the review first: the kept view is there from the first hosted render. */
+    await screen.findByTestId('shots')
+    expect(document.querySelector('[aria-label="The review"]')).toBeNull()
+    expect(header('showing')).toMatchObject({ value: 'shots' })
+    expect(press('showing', 'review')).toBe(true)
+    expect(wrote).toEqual([[{ showing: 'review', other: 1 }, 300]])
+  })
+
+  test('a kept value that is not one of the views is ignored', async () => {
+    await opened({}, { kept: { showing: 'sideways' }, read: () => ({ kept: { showing: 'sideways' } }) as ReturnType<NonNullable<Host['read']>>, remember: (() => {}) as NonNullable<Host['remember']> })
+    expect(header('showing')).toMatchObject({ value: 'review' })
+  })
+})
+
 describe('the review is told when it changed, never asked on a clock', () => {
   test('one read as the stream opens, no interval, and another only when the server says so', async () => {
     const realInterval = globalThis.setInterval

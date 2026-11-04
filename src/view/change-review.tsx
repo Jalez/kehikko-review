@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { useKept, type KeepsFor } from 'kehikot-module-protocol/client/react'
 import type { CodeLocation, HeaderItemInput, LocationIntent, LocationSetResult, SharedLocation } from 'kehikot-module-protocol'
 
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +19,7 @@ import { HoldingContext, drafts, type Holding } from './holding.ts'
 import { ShotsView } from './shots.tsx'
 import { askOf, commentAsked, locationOf, placeOf, type Place } from './where.ts'
 import { heldAtProject } from '../wire/held-at-project.ts'
+import { useKeeps } from '../wire/keeps.ts'
 import { OutLink } from './out-link.tsx'
 
 /**
@@ -108,6 +110,8 @@ export function ChangeReview({
     drawn: boolean
     changes: readonly string[]
     onChange(ref: string): void
+    /** This container's kept view, which `showing` is read from and written to. */
+    keeps?: KeepsFor
   }
   /** Where somebody is pointing in a change's code on this kehikko (`context.location`). */
   location?: SharedLocation | null
@@ -144,7 +148,15 @@ export function ChangeReview({
   const commits = change.at === 'ok' ? change.value.commits : []
 
   /* ---- which view ---- */
-  const [showing, setShowing] = useState<typeof DOCUMENT | typeof SHOTS>(DOCUMENT)
+  /* Kept for this container (this module on this kehikko) and back after a restart: a way of looking,
+     not the change looked at. Without a host it is this page's alone. */
+  const unkept = useKeeps({})
+  const [showing, setShowing] = useKept<typeof DOCUMENT | typeof SHOTS>(
+    chrome?.keeps ?? unkept,
+    'showing',
+    DOCUMENT,
+    (value) => value === DOCUMENT || value === SHOTS,
+  )
 
   /* ---- the review ---- */
   const [draft, setDraft] = useState<Loaded<Draft>>({ at: 'loading' })

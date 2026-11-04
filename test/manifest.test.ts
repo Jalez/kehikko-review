@@ -24,11 +24,11 @@ describe('the manifest', () => {
     expect(MANIFEST.mcp?.url).toBe('/mcp')
   })
 
-  test('asks a host for the tracker reading, for pointing at code and for opening links, and nothing else, and says what it reacts to', () => {
+  test('asks a host for the tracker reading, for pointing at code and for opening links, keeps its view, and nothing else, and says what it reacts to', () => {
     /* Reaching GitHub and GitLab is not a capability: this module's own server
        runs the person's `gh` and `glab`. `location:set` is a point's code reference;
-       `address:open` hands a link to the canvas (protocol 2.16.0). */
-    expect(MANIFEST.declares.uses).toEqual(['trackers:read', 'location:set', 'address:open'])
+       `address:open` hands a link to the canvas (protocol 2.16.0); `state:keep` keeps the view per container (2.51.0). */
+    expect(MANIFEST.declares.uses).toEqual(['trackers:read', 'location:set', 'address:open', 'state:keep'])
     expect(MANIFEST.reacts).toEqual(['selection', 'tracker', 'location'])
     expect(MANIFEST.dataVersion).toBe(2)
     expect(MANIFEST.modes).toEqual([{ id: 'review', label: 'Review', scope: 'part', scopeSays: 'the review of the one change picked out' }])

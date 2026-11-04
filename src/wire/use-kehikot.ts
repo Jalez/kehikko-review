@@ -74,6 +74,12 @@ export interface Host {
   presses?: MutableRefObject<Press | null>
   /** Whether a host has ever pressed one: such a host draws the header, and the page's own control is gone. */
   pressed?: boolean
+  /** This container's kept view, as the host gave it (2.51.0): one key per field, read by `useKept`. */
+  kept?: unknown
+  /** The kept value as it stands now, a write that has not come back yet included. */
+  read?: ProtocolHost['read']
+  /** Keep the view for this container (`state.set`). Absent in a test that draws no host. */
+  remember?: ProtocolHost['remember']
 }
 
 export function useKehikot(): Host {
@@ -112,7 +118,10 @@ export function useKehikot(): Host {
       drawsFooter: host.where === 'hosted' ? host.drawsFooter : null,
       presses,
       pressed,
+      kept: host.kept,
+      read: host.read,
+      remember: host.remember,
     }),
-    [host.where, host.request, host.location, host.locate, handsAddresses, hostOpenAddress, host.header, host.footer, host.drawsFooter, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
+    [host.kept, host.read, host.remember, host.where, host.request, host.location, host.locate, handsAddresses, hostOpenAddress, host.header, host.footer, host.drawsFooter, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
   )
 }
