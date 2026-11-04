@@ -5,6 +5,7 @@ import type { CodeLocation, HeaderItemInput, LocationIntent, LocationSetResult, 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { HeaderFallback } from '@/header-fallback'
+import { footerOf } from '@/footer'
 import { DOCUMENT, SHOTS, headerOf } from '@/header'
 import type { Host } from '@/wire/use-kehikot'
 import type { Api, ChangeRead } from '@/wire/api'
@@ -101,6 +102,8 @@ export function ChangeReview({
   /** The page's header: what to declare it through, whether a host draws it, and which changes there are to choose between. */
   chrome?: {
     header: Host['header']
+    /** Present only when the host draws the footer (2.38.0): declare it through this. */
+    footer?: Host['footer']
     presses: Host['presses']
     drawn: boolean
     changes: readonly string[]
@@ -235,9 +238,32 @@ export function ChangeReview({
    * whole, and again only when it is a different list: a keystroke in a point changes none of it.
    */
   const items = useMemo<HeaderItemInput[]>(
-    () => (chrome ? headerOf({ changes: chrome.changes, change: refName, waiting, showing }) : []),
+    () => (chrome ? headerOf({ changes: chrome.changes, change: refName, waiting, showing, footed: Boolean(chrome.footer) }) : []),
     [chrome, refName, waiting, showing],
   )
+
+  /*
+   * The footer, when the host draws one: the change's state and head, the points waiting and sent,
+   * and the verdict. Whole, and again only when it says something different.
+   */
+  const declareFooter = chrome?.footer
+  const footerKey = declareFooter
+    ? JSON.stringify(
+        footerOf({
+          refName,
+          tracker,
+          change:
+            change.at === 'ok'
+              ? { at: 'ok', state: change.value.state, draft: change.value.draft, head: change.value.head, title: shownTitle, author: change.value.author ?? null }
+              : change,
+          review: draft.at === 'ok' ? { waiting, sent: all.length - waiting, verdict: draft.value.verdict } : null,
+        }),
+      )
+    : ''
+  useEffect(() => {
+    if (declareFooter && footerKey) declareFooter(JSON.parse(footerKey))
+  }, [declareFooter, footerKey])
+  useEffect(() => () => declareFooter?.([]), [declareFooter])
   const itemsKey = chrome && change.at === 'ok' ? JSON.stringify(items) : ''
   const declare = chrome?.header
   useEffect(() => {

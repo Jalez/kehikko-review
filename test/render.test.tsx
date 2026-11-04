@@ -889,6 +889,26 @@ describe('the header: what the host draws in the container’s own row', () => {
     expect(String(press('showing', HEAD))).toContain('review or the Before / after')
   })
 
+  test('a host that draws the footer is told the change, the points and the verdict; the switch then counts nothing', async () => {
+    const footers: unknown[][] = []
+    await opened(
+      { comments: [comment({ id: 'c-1' }), comment({ id: 'c-2', line: 12 })], verdict: 'approve' },
+      { drawsFooter: true, footer: (items) => void footers.push(items) },
+    )
+    await waitFor(() => expect(footers.at(-1)?.some((i) => (i as { id: string }).id === 'points')).toBe(true))
+    const last = footers.at(-1) as { id: string; text: string }[]
+    expect(last.find((i) => i.id === 'change')?.text).toBe(`gh#46 · open · ${HEAD.slice(0, 8)}`)
+    expect(last.find((i) => i.id === 'points')?.text).toBe('2 draft points')
+    expect(last.find((i) => i.id === 'verdict')?.text).toBe('Verdict: Approve')
+    expect(optionsOf('showing')).toEqual(['Review', 'Before / after'])
+  })
+
+  test('a host that does not draw the footer is sent none', async () => {
+    const footers: unknown[][] = []
+    await opened({ comments: [comment({ id: 'c-1' })] }, { drawsFooter: false, footer: (items) => void footers.push(items) })
+    expect(footers).toHaveLength(0)
+  })
+
   test('the page’s own control is there until a host has pressed one, and not after', async () => {
     const made = fakeApi()
     const { container, rerender } = render(<Screen host={host({ pressed: false })} api={made.api} />)
