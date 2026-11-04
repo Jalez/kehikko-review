@@ -1,6 +1,6 @@
 {
   "name": "kehikko-review",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": true,
   "type": "module",
   "description": "Review, a module a kehikko host frames. An app: its own store, its own page, its own port.",
@@ -22,7 +22,7 @@
     "lucide-react": "^1.33.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "kehikot-module-protocol": "git+ssh://git@github.com/Jalez/kehikko-protocol.git#v2.49.0",
+    "kehikot-module-protocol": "git+ssh://git@github.com/Jalez/kehikko-protocol.git#76f40d00eefcc97fde7b2fa11918160a3959ce36",
     "tailwind-merge": "^3.6.0",
     "zod": "^3.23.8"
   },

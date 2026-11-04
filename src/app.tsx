@@ -8,6 +8,7 @@ import { current, type Seen } from '@/live/changes'
 import { useChanges } from '@/live/use-changes'
 import { ChangeReview } from '@/view/change-review'
 import { api as realApi, type Api } from '@/wire/api'
+import { useKeeps } from '@/wire/keeps'
 import { useKehikot, type Host } from '@/wire/use-kehikot'
 import { OpenAddressContext } from '@/view/out-link'
 
@@ -55,6 +56,8 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
   /* How this page's own server last answered: `down` when nothing did, `stale` when it has restarted under this page. */
   const server = useServerStanding()
   const [round, setRound] = useState(0)
+  /* This container's kept view: which of review and Before / after shows, back after a restart. */
+  const keeps = useKeeps(host)
 
   const refName = current(host.selection, seen, picked)
   const row = refName && Object.hasOwn(seen, refName) ? seen[refName] : undefined
@@ -109,7 +112,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
           projectId={host.projectId}
           api={api}
           round={round}
-          chrome={{ header: host.header, footer: host.drawsFooter === true ? host.footer : undefined, presses: host.presses, drawn: host.where === 'hosted' && Boolean(host.pressed), changes, onChange: setPicked }}
+          chrome={{ header: host.header, footer: host.drawsFooter === true ? host.footer : undefined, presses: host.presses, drawn: host.where === 'hosted' && Boolean(host.pressed), changes, onChange: setPicked, keeps }}
           location={host.location ?? null}
           {...(host.locate ? { locate: host.locate } : {})}
         />

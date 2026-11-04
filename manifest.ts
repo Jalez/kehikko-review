@@ -49,13 +49,16 @@ export const VERSION: string = pkg.version
  * Diff scrolls there. Review no longer draws a diff of its own. It also reacts to `location`: when
  * somebody asks for a comment at a place (intent `comment`), the page opens a new point there.
  *
+ * `state:keep` (2.51.0): the host keeps one value per container — this module on this kehikko —
+ * and hands it back in the greeting, so which of the review and Before / after shows is as it was
+ * left after a restart. The draft is not in it: that is in the project. Nor is which of several
+ * selected changes is open: that is the selection, the subject the host gives, not a way of looking.
+ *
  * - **`selection:set`.** This app REACTS to a selection and never makes one. A point's code
  *   reference is always in the change on the page, which is always one of the selected changes, so
  *   there is nothing to select before pointing.
  *   A module whose job is to answer a question about what is picked has no
  *   business changing what every other container is looking at.
- * - **`state:keep`.** What is worth keeping is the draft, and that is in the
- *   project, not in a host's memory of a frame.
  * - **`stage:report`.** A review is an opinion about a change. Where the work
  *   stands is for whoever is doing it to say.
  *
@@ -161,7 +164,7 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   partless: 'Shows the review of the one change a person selected, which is always in hand.',
   declares: {
     protocol: `>=${PROTOCOL} <${PROTOCOL + 1}`,
-    uses: ['trackers:read', 'location:set', 'address:open'],
+    uses: ['trackers:read', 'location:set', 'address:open', 'state:keep'],
     storage: true,
     prompt: false,
     /* The skills this module offers, for the origin it is on (`skills.ts`). */
