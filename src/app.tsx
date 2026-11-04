@@ -109,7 +109,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
           projectId={host.projectId}
           api={api}
           round={round}
-          chrome={{ header: host.header, presses: host.presses, drawn: host.where === 'hosted' && Boolean(host.pressed), changes, onChange: setPicked }}
+          chrome={{ header: host.header, footer: host.drawsFooter === true ? host.footer : undefined, presses: host.presses, drawn: host.where === 'hosted' && Boolean(host.pressed), changes, onChange: setPicked }}
           location={host.location ?? null}
           {...(host.locate ? { locate: host.locate } : {})}
         />

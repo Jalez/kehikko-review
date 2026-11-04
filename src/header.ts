@@ -34,6 +34,11 @@ export interface HeaderState {
   waiting: number
   /** Which view is on: the review, or the Before / after pictures. */
   showing: typeof DOCUMENT | typeof SHOTS
+  /**
+   * The host draws the footer, which says how many points wait (`footer.ts`): the count is a
+   * readout, so it is not in the switch's label too.
+   */
+  footed?: boolean
 }
 
 export function headerOf(state: HeaderState): HeaderItemInput[] {
@@ -62,7 +67,7 @@ export function headerOf(state: HeaderState): HeaderItemInput[] {
     agents: true,
     value: state.showing,
     options: [
-      { id: DOCUMENT, label: cut(`Review${state.waiting ? ` · ${state.waiting} ${state.waiting === 1 ? 'draft point' : 'draft points'}` : ''}`) },
+      { id: DOCUMENT, label: cut(`Review${state.waiting && !state.footed ? ` · ${state.waiting} ${state.waiting === 1 ? 'draft point' : 'draft points'}` : ''}`) },
       { id: SHOTS, label: 'Before / after' },
     ],
   })

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type MutableRefObject } from 'react'
 
-import type { AddressOpenResult, CodeLocation, HeaderItemInput, LocationIntent, LocationSetResult, SharedLocation } from 'kehikot-module-protocol'
+import type { AddressOpenResult, CodeLocation, FooterItemInput, HeaderItemInput, LocationIntent, LocationSetResult, SharedLocation } from 'kehikot-module-protocol'
 
 import { useHost, type Host as ProtocolHost, type Where } from 'kehikot-module-protocol/client/react'
 
@@ -66,6 +66,10 @@ export interface Host {
   request: ProtocolHost['request']
   /** Declare the header items, whole (`kehikot.header`). Absent in a test that draws no header. */
   header?(items: HeaderItemInput[]): void
+  /** Declare the footer, whole (`kehikot.footer`, 2.38.0). Only when `drawsFooter` is true. */
+  footer?(items: FooterItemInput[]): void
+  /** Whether the host draws this page's declared footer; anything but `true` means no. */
+  drawsFooter?: boolean | null
   /** Where the page puts what takes a press on one of them. */
   presses?: MutableRefObject<Press | null>
   /** Whether a host has ever pressed one: such a host draws the header, and the page's own control is gone. */
@@ -104,9 +108,11 @@ export function useKehikot(): Host {
       locate: host.locate,
       ...(handsAddresses ? { openAddress: (url: string) => hostOpenAddress(url) } : {}),
       header: host.header,
+      footer: host.footer,
+      drawsFooter: host.where === 'hosted' ? host.drawsFooter : null,
       presses,
       pressed,
     }),
-    [host.where, host.request, host.location, host.locate, handsAddresses, hostOpenAddress, host.header, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
+    [host.where, host.request, host.location, host.locate, handsAddresses, hostOpenAddress, host.header, host.footer, host.drawsFooter, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
   )
 }
