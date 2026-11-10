@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { projectKey } from 'kehikot-module-protocol'
 import { probeServer } from 'kehikot-module-protocol/client'
@@ -68,11 +68,35 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
      selection, which is its own sentence below. */
   const cover = coverFor({ ...host, server }, { host: true })
 
+  /*
+   * The host holds its cover until this page says what it shows is drawn (2.70.0), so the first
+   * "Asking…" is under the cover rather than a flash: said once, when the first answer is on screen —
+   * a cover that is not a wait, the sentence for no selection or a refusal, what each selected ref
+   * is, or the change and its review read. Never gated on being visible: the host keeps a covered
+   * page hidden, and waiting for it to be shown would hold the cover for the whole timeout.
+   */
+  const [reviewDrawn, setReviewDrawn] = useState(false)
+  const onDrawn = useCallback(() => setReviewDrawn(true), [])
+  const drawn = cover
+    ? cover !== 'waiting' && cover !== 'loading' && cover !== 'stale'
+    : host.where === 'hosted' &&
+      (!host.selection.length ||
+        Boolean(refused) ||
+        (row?.at === 'change' ? reviewDrawn : host.selection.every((ref) => Object.hasOwn(seen, ref) && seen[ref]?.at !== 'asking')))
+  const saidDrawn = useRef(false)
+  const { ready } = host
+  useEffect(() => {
+    if (!drawn || saidDrawn.current || !ready) return
+    saidDrawn.current = true
+    ready()
+  }, [drawn, ready])
+
   return (
     /* `min-w-0` and `overflow-x-hidden` on the one scroller: nothing on this
        page may make it scroll sideways. Quoted code scrolls inside its own
-       box, and everything else wraps or truncates. */
-    <main className="flex h-screen min-w-0 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2 text-sm">
+       box, and everything else wraps or truncates. Marked as the scroller the
+       host keeps for this container (2.70.0). */
+    <main data-kehikot-scroll="" className="flex h-screen min-w-0 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2 text-sm">
       {cover ? (
         <Cover
           state={cover}
@@ -114,6 +138,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
           round={round}
           chrome={{ header: host.header, footer: host.drawsFooter === true ? host.footer : undefined, presses: host.presses, drawn: host.where === 'hosted' && Boolean(host.pressed), changes, onChange: setPicked, keeps }}
           location={host.location ?? null}
+          onDrawn={onDrawn}
           {...(host.locate ? { locate: host.locate } : {})}
         />
       ) : null}

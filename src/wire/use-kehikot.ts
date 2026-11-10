@@ -80,18 +80,29 @@ export interface Host {
   read?: ProtocolHost['read']
   /** Keep the view for this container (`state.set`). Absent in a test that draws no host. */
   remember?: ProtocolHost['remember']
+  /**
+   * Say that what the page shows is drawn (2.70.0): the host holds its cover until then, or until
+   * its own timeout. Called once, by `Screen`. Absent in a test that draws no host.
+   */
+  ready?: ProtocolHost['ready']
 }
 
 export function useKehikot(): Host {
   const presses = useRef<Press | null>(null)
   const [pressed, setPressed] = useState(headerDrawn)
-  const host = useHost(ID, {
-    onPress: (press) => {
-      rememberHeaderDrawn()
-      setPressed(true)
-      return presses.current ? presses.current(press) : 'There is no change open here to press on.'
+  const host = useHost(
+    ID,
+    {
+      onPress: (press) => {
+        rememberHeaderDrawn()
+        setPressed(true)
+        return presses.current ? presses.current(press) : 'There is no change open here to press on.'
+      },
     },
-  })
+    /* The kept view (2.70.0) keeps the page's scroll only: `showing` is this module's own kept state
+       (`useKept`), and `change` follows the selection, so neither is pressed back from a kept value. */
+    { keepView: { header: false } },
+  )
   /* `selection` is the same array for as long as the host repeats the same selection. */
   const { selection } = host
   const trackerAt = host.context?.tracker?.at ?? null
@@ -121,7 +132,8 @@ export function useKehikot(): Host {
       kept: host.kept,
       read: host.read,
       remember: host.remember,
+      ready: host.ready,
     }),
-    [host.kept, host.read, host.remember, host.where, host.request, host.location, host.locate, handsAddresses, hostOpenAddress, host.header, host.footer, host.drawsFooter, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
+    [host.kept, host.read, host.remember, host.ready, host.where, host.request, host.location, host.locate, handsAddresses, hostOpenAddress, host.header, host.footer, host.drawsFooter, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
   )
 }
