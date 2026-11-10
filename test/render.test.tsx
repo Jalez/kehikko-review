@@ -262,6 +262,44 @@ function pointing(answer: LocationSetResult | null = { outcome: 'taken', why: ''
 
 const card = (id: string) => document.querySelector(`[data-comment="${id}"]`) as HTMLElement
 
+/* 2.70.0: the host holds its cover until the page says what it shows is drawn. */
+describe('the page says it is drawn, once, when the first answer is on screen', () => {
+  test('a change: not while it is being asked, and once when the change and its review are in', async () => {
+    let drawn = 0
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const made = fakeApi()
+    const asked = made.api.change
+    made.api.change = async (url) => {
+      await gate
+      return asked(url)
+    }
+    const view = render(<Screen host={host({ ready: () => void (drawn += 1) })} api={made.api} />)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(drawn).toBe(0)
+    release()
+    await screen.findByRole('article', { name: 'The review' })
+    await waitFor(() => expect(drawn).toBe(1))
+    view.rerender(<Screen host={host({ ready: () => void (drawn += 1), trackerAt: '2026-11-10T12:00:00.000Z' })} api={made.api} />)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(drawn).toBe(1)
+    expect(view.container.querySelector('main')?.hasAttribute('data-kehikot-scroll')).toBe(true)
+  })
+
+  test('nothing selected is an answer too', async () => {
+    let drawn = 0
+    render(<Screen host={host({ selection: [], ready: () => void (drawn += 1) })} api={fakeApi().api} />)
+    await waitFor(() => expect(drawn).toBe(1))
+  })
+
+  test('still waiting for a host is not', async () => {
+    let drawn = 0
+    render(<Screen host={host({ where: 'listening', selection: [], ready: () => void (drawn += 1) })} api={fakeApi().api} />)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(drawn).toBe(0)
+  })
+})
+
 describe('when there is no change to review, the page says which absence it is', () => {
   test('nothing is framing it', () => {
     render(<Screen host={host({ where: 'unhosted', selection: [], projectPath: null, project: null, epic: null })} api={fakeApi().api} />)

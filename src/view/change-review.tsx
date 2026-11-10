@@ -86,6 +86,7 @@ export function ChangeReview({
   chrome,
   location = null,
   locate,
+  onDrawn,
 }: {
   /** The ref as selected on the canvas: `gh#46`, `!3105`. */
   refName: string
@@ -117,6 +118,8 @@ export function ChangeReview({
   location?: SharedLocation | null
   /** Point the kehikko at a place (`location.set`). Absent when nothing frames the page. */
   locate?(location: CodeLocation | null, intent?: LocationIntent): Promise<LocationSetResult | null>
+  /** Told when the change and its review have first been read (or failed): what is shown is drawn. */
+  onDrawn?: () => void
 }) {
   /* ---- the change ---- */
   const [change, setChange] = useState<Loaded<ChangeRead>>({ at: 'loading' })
@@ -218,6 +221,12 @@ export function ChangeReview({
     }),
     [here, url],
   )
+
+  /* ---- drawn: the change and its review read, or failed (2.70.0) ---- */
+  const drawn = change.at !== 'loading' && (draft.at !== 'loading' || !projectPath)
+  useEffect(() => {
+    if (drawn) onDrawn?.()
+  }, [drawn, onDrawn])
 
   /* ---- "comment here": a place somebody asked for a point at ---- */
   const [asked, setAsked] = useState<Place | null>(null)

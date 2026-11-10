@@ -1,0 +1,152 @@
+[
+  {
+    "name": "a change, its review drafted",
+    "header": [
+      {
+        "kind": "switch",
+        "id": "showing",
+        "label": "Showing",
+        "icon": "git-commit-horizontal",
+        "agents": true,
+        "value": "review",
+        "options": [
+          {
+            "id": "review",
+            "label": "Review"
+          },
+          {
+            "id": "shots",
+            "label": "Before / after"
+          }
+        ]
+      }
+    ],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "change",
+        "text": "gh#46 · open · aaaaaaaa",
+        "level": "normal",
+        "align": "start",
+        "optional": false,
+        "tooltip": "gh#46 feat: an official module list, by jalez. Head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa."
+      },
+      {
+        "kind": "text",
+        "id": "points",
+        "text": "2 draft points · 1 sent",
+        "level": "normal",
+        "align": "center",
+        "optional": false,
+        "tooltip": "2 draft points not sent yet; 1 sent to GitHub."
+      },
+      {
+        "kind": "text",
+        "id": "verdict",
+        "text": "Verdict: Request changes",
+        "level": "normal",
+        "align": "end",
+        "optional": true
+      }
+    ],
+    "state": true
+  },
+  {
+    "name": "two changes selected, the pictures shown",
+    "header": [
+      {
+        "kind": "switch",
+        "id": "change",
+        "label": "Change under review",
+        "icon": "git-pull-request",
+        "agents": true,
+        "value": "c1",
+        "options": [
+          {
+            "id": "c0",
+            "label": "gh#46"
+          },
+          {
+            "id": "c1",
+            "label": "gh#47"
+          }
+        ]
+      },
+      {
+        "kind": "switch",
+        "id": "showing",
+        "label": "Showing",
+        "icon": "git-commit-horizontal",
+        "agents": true,
+        "value": "shots",
+        "options": [
+          {
+            "id": "review",
+            "label": "Review"
+          },
+          {
+            "id": "shots",
+            "label": "Before / after"
+          }
+        ]
+      }
+    ],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "change",
+        "text": "gh#47 · open · draft · aaaaaaaa",
+        "level": "normal",
+        "align": "start",
+        "optional": false,
+        "tooltip": "gh#47 feat: an official module list, by jalez. Head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa."
+      },
+      {
+        "kind": "text",
+        "id": "points",
+        "text": "No draft points",
+        "level": "normal",
+        "align": "center",
+        "optional": false,
+        "tooltip": "Nothing waiting to be sent."
+      }
+    ],
+    "state": true
+  },
+  {
+    "name": "the change being asked for",
+    "header": [],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "change",
+        "text": "Asking GitLab about !3105…",
+        "level": "normal",
+        "align": "start",
+        "optional": false
+      }
+    ],
+    "state": true
+  },
+  {
+    "name": "the tracker failed",
+    "header": [],
+    "footer": [
+      {
+        "kind": "text",
+        "id": "change",
+        "text": "gh#46: GitHub did not answer.",
+        "level": "critical",
+        "align": "start",
+        "optional": false,
+        "tooltip": "GitHub did not answer."
+      }
+    ],
+    "state": true
+  },
+  {
+    "name": "nothing selected",
+    "header": [],
+    "footer": []
+  }
+]
