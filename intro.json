@@ -1,0 +1,412 @@
+{
+  "slides": [
+    {
+      "title": "The review of a change, as one document",
+      "body": "Pick a pull or merge request anywhere on the kehikko. Review shows its review top to bottom: verdict, summary, points on exact lines, and evidence.",
+      "art": {
+        "label": "a change picked in another container, and its review opening as one document",
+        "shapes": [
+          {
+            "kind": "pane",
+            "x": 14,
+            "y": 14,
+            "w": 110,
+            "h": 122
+          },
+          {
+            "kind": "box",
+            "x": 22,
+            "y": 36,
+            "w": 94,
+            "h": 16,
+            "round": 4,
+            "tone": "card"
+          },
+          {
+            "kind": "box",
+            "x": 22,
+            "y": 58,
+            "w": 94,
+            "h": 16,
+            "round": 4,
+            "tone": "strong",
+            "motion": "chip"
+          },
+          {
+            "kind": "text",
+            "x": 30,
+            "y": 69,
+            "text": "#46",
+            "size": 8,
+            "mono": true,
+            "tone": "text"
+          },
+          {
+            "kind": "box",
+            "x": 22,
+            "y": 80,
+            "w": 94,
+            "h": 16,
+            "round": 4,
+            "tone": "card"
+          },
+          {
+            "kind": "pane",
+            "x": 140,
+            "y": 14,
+            "w": 166,
+            "h": 122,
+            "tone": "strong"
+          },
+          {
+            "kind": "box",
+            "x": 150,
+            "y": 34,
+            "w": 54,
+            "h": 14,
+            "round": 7,
+            "tone": "ok",
+            "motion": "pop",
+            "delay": 0.6
+          },
+          {
+            "kind": "rows",
+            "x": 150,
+            "y": 56,
+            "widths": [
+              140,
+              110
+            ],
+            "gap": 9,
+            "tone": "text",
+            "motion": "rise",
+            "delay": 0.8
+          },
+          {
+            "kind": "box",
+            "x": 150,
+            "y": 80,
+            "w": 146,
+            "h": 44,
+            "round": 4,
+            "tone": "card",
+            "motion": "rise",
+            "delay": 1.1
+          },
+          {
+            "kind": "text",
+            "x": 158,
+            "y": 93,
+            "text": "src/app.ts:40",
+            "size": 7,
+            "mono": true,
+            "tone": "muted"
+          },
+          {
+            "kind": "rows",
+            "x": 158,
+            "y": 102,
+            "widths": [
+              120,
+              90
+            ],
+            "gap": 9
+          }
+        ]
+      }
+    },
+    {
+      "title": "Write a point on a line",
+      "body": "Press New point, or point at a line in Source or Diff and ask for a comment there. Each point keeps the quoted code, its words and its evidence.",
+      "art": {
+        "label": "a line pointed at in the code, and a new point card on it",
+        "shapes": [
+          {
+            "kind": "pane",
+            "x": 14,
+            "y": 14,
+            "w": 140,
+            "h": 122
+          },
+          {
+            "kind": "rows",
+            "x": 26,
+            "y": 36,
+            "widths": [
+              90,
+              70,
+              110
+            ],
+            "gap": 12
+          },
+          {
+            "kind": "box",
+            "x": 20,
+            "y": 70,
+            "w": 128,
+            "h": 12,
+            "round": 2,
+            "tone": "strong",
+            "motion": "chip",
+            "delay": 0.3
+          },
+          {
+            "kind": "rows",
+            "x": 26,
+            "y": 74,
+            "widths": [
+              96
+            ],
+            "tone": "text"
+          },
+          {
+            "kind": "rows",
+            "x": 26,
+            "y": 96,
+            "widths": [
+              80,
+              104
+            ],
+            "gap": 12
+          },
+          {
+            "kind": "pointer",
+            "x": 110,
+            "y": 78,
+            "motion": "pop"
+          },
+          {
+            "kind": "line",
+            "x": 148,
+            "y": 76,
+            "x2": 172,
+            "y2": 76,
+            "dashed": true,
+            "motion": "draw",
+            "delay": 0.7
+          },
+          {
+            "kind": "box",
+            "x": 172,
+            "y": 40,
+            "w": 134,
+            "h": 72,
+            "round": 5,
+            "tone": "card",
+            "motion": "pop",
+            "delay": 0.9
+          },
+          {
+            "kind": "text",
+            "x": 182,
+            "y": 56,
+            "text": "New point",
+            "size": 8,
+            "tone": "muted"
+          },
+          {
+            "kind": "rows",
+            "x": 182,
+            "y": 66,
+            "widths": [
+              110,
+              90,
+              70
+            ],
+            "gap": 10,
+            "tone": "text",
+            "motion": "rise",
+            "delay": 1.2
+          }
+        ]
+      }
+    },
+    {
+      "title": "Let an agent draft, keep what is right",
+      "body": "Type /review-pass in Claude Code for a careful review of the change. Its points are drafts: keep the ones you agree with, edit or remove the rest.",
+      "art": {
+        "label": "an agent's draft points, one kept and one removed",
+        "shapes": [
+          {
+            "kind": "pane",
+            "x": 40,
+            "y": 12,
+            "w": 240,
+            "h": 126
+          },
+          {
+            "kind": "box",
+            "x": 56,
+            "y": 30,
+            "w": 208,
+            "h": 30,
+            "round": 4,
+            "tone": "card",
+            "dashed": true,
+            "motion": "rise",
+            "delay": 0.2
+          },
+          {
+            "kind": "rows",
+            "x": 66,
+            "y": 41,
+            "widths": [
+              130
+            ],
+            "tone": "text"
+          },
+          {
+            "kind": "box",
+            "x": 216,
+            "y": 38,
+            "w": 38,
+            "h": 14,
+            "round": 3,
+            "tone": "ok",
+            "motion": "pop",
+            "delay": 1
+          },
+          {
+            "kind": "text",
+            "x": 235,
+            "y": 48,
+            "text": "Kept",
+            "size": 7,
+            "middle": true,
+            "tone": "text"
+          },
+          {
+            "kind": "box",
+            "x": 56,
+            "y": 68,
+            "w": 208,
+            "h": 30,
+            "round": 4,
+            "tone": "card",
+            "dashed": true,
+            "motion": "narrow",
+            "delay": 1.4
+          },
+          {
+            "kind": "rows",
+            "x": 66,
+            "y": 79,
+            "widths": [
+              110
+            ]
+          },
+          {
+            "kind": "box",
+            "x": 56,
+            "y": 106,
+            "w": 208,
+            "h": 22,
+            "round": 4,
+            "tone": "card",
+            "dashed": true,
+            "motion": "rise",
+            "delay": 0.6
+          },
+          {
+            "kind": "rows",
+            "x": 66,
+            "y": 113,
+            "widths": [
+              120
+            ]
+          },
+          {
+            "kind": "pointer",
+            "x": 236,
+            "y": 48,
+            "motion": "pop",
+            "delay": 0.8
+          }
+        ]
+      }
+    },
+    {
+      "title": "Only you send it",
+      "body": "Send review… shows exactly what will be posted, under which login and with which verdict. Post it sends it; nothing is posted before that.",
+      "art": {
+        "label": "the send step showing what will be posted, then a second press",
+        "shapes": [
+          {
+            "kind": "pane",
+            "x": 50,
+            "y": 12,
+            "w": 220,
+            "h": 126
+          },
+          {
+            "kind": "rows",
+            "x": 66,
+            "y": 34,
+            "widths": [
+              150,
+              120,
+              100
+            ],
+            "gap": 12,
+            "tone": "text",
+            "motion": "rise",
+            "delay": 0.2
+          },
+          {
+            "kind": "line",
+            "x": 50,
+            "y": 82,
+            "x2": 270,
+            "y2": 82,
+            "tone": "faint"
+          },
+          {
+            "kind": "box",
+            "x": 66,
+            "y": 96,
+            "w": 90,
+            "h": 22,
+            "round": 5,
+            "tone": "card"
+          },
+          {
+            "kind": "text",
+            "x": 111,
+            "y": 110,
+            "text": "Not yet",
+            "size": 8,
+            "middle": true,
+            "tone": "muted"
+          },
+          {
+            "kind": "box",
+            "x": 166,
+            "y": 96,
+            "w": 90,
+            "h": 22,
+            "round": 5,
+            "tone": "strong",
+            "motion": "chip",
+            "delay": 1
+          },
+          {
+            "kind": "text",
+            "x": 211,
+            "y": 110,
+            "text": "Post it",
+            "size": 8,
+            "middle": true,
+            "tone": "text"
+          },
+          {
+            "kind": "pointer",
+            "x": 218,
+            "y": 112,
+            "motion": "pop",
+            "delay": 0.8
+          }
+        ]
+      }
+    }
+  ]
+}

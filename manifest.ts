@@ -1,5 +1,8 @@
 import { MANIFEST_KIND, PROTOCOL, manifestSchema, type Manifest } from 'kehikot-module-protocol'
 import pkg from './package.json'
+/* This module's introduction (protocol 2.57.0): slides the host shows in its introduction dialog. Also
+   read as a file from the repository, so a person can watch it before the module runs or is installed. */
+import intro from './intro.json'
 
 import { PREFERRED_PORT } from './port.ts'
 import { serveFrom, skillDeclarations } from './skills.ts'
@@ -7,6 +10,50 @@ import { serveFrom, skillDeclarations } from './skills.ts'
 export { PREFERRED_PORT }
 
 import { ID } from './id.ts'
+
+/** "How to use" (protocol 2.52.0). Each string one line of plain text. */
+export const HELP = {
+  summary: 'The review of the picked pull or merge request as one document: verdict, summary, points on exact lines, evidence and replies. Only you send it.',
+  sections: [
+    {
+      title: 'What it shows',
+      points: [
+        'The review of ONE change: the first pull or merge request picked on the kehikko, with a row of buttons when several are picked.',
+        'Top to bottom: the verdict and summary, with a review run’s proposal beside them; the points, each on exact lines with the quoted code, its words, severity and evidence; the evidence kept beside the review; and replies, on a change you wrote.',
+        'Each point says who wrote it and where it stands: draft, kept, sent or resolved.',
+        'Before / after, in the View switch, pairs the pictures posted in the change’s description and comments.',
+        'Review draws no diff: press a point’s code reference and Source opens the file there while Diff scrolls to it.',
+      ],
+    },
+    {
+      title: 'How to use it',
+      points: [
+        'Pick a pull or merge request in References, Journeys or any other module.',
+        'Press New point…, or point at a line in Source or Diff and ask for a comment there.',
+        'Keep an agent’s draft point you agree with, or edit or remove it. Once kept or edited it is yours.',
+        'Set the verdict and summary, then press Send review…: it shows what will be posted, to which change and under which login. Post it sends; Not yet goes back.',
+        'Mark a sent point resolved once its author dealt with it.',
+        'Skills, typed in Claude Code: /review-pass for a careful review, /review-point for one point where you are pointing, /review-reply for replies on your own change.',
+      ],
+    },
+    {
+      title: 'What agents can do',
+      points: [
+        'Read which change is open and where you point (read_focus), the change and its diff (read_change, read_diff), and the review (read_review).',
+        'Draft points (add_comment), keep evidence beside them (add_evidence), and propose a verdict and summary (set_verdict, propose_review).',
+        'Everything an agent writes is a draft. It cannot change what you wrote or kept, and it cannot send.',
+      ],
+    },
+    {
+      title: 'Rules',
+      points: [
+        'Only you send, only what you wrote or kept, and only after seeing exactly what will be posted. If the review changed in between, the send is refused.',
+        'It holds no token: it reads and posts through gh or glab on this computer, under whoever is logged in to them.',
+        'A point the tracker will not attach to its line is written into the summary instead, never dropped.',
+      ],
+    },
+  ],
+}
 
 export { ID }
 /** The module's version: package.json's, the one place it is written. A release is tagged with it. */
@@ -135,6 +182,9 @@ export const MANIFEST: Manifest = manifestSchema.parse({
     + 'beside it, `set_verdict` proposes a summary and verdict. What the person wrote or kept is theirs: you cannot change '
     + 'it. Everything you write is a DRAFT; only the person sends, from the page. Do not post review comments with '
     + '`gh` or `glab` yourself when a person is reviewing here.',
+  /* "How to use" (protocol 2.52.0), and the introduction (protocol 2.57.0). */
+  help: HELP,
+  intro,
   entry: '/app',
   /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
   modes: [
