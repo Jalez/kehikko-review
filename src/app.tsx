@@ -96,7 +96,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
        page may make it scroll sideways. Quoted code scrolls inside its own
        box, and everything else wraps or truncates. Marked as the scroller the
        host keeps for this container (2.70.0). */
-    <main data-kehikot-scroll="" className="flex h-screen min-w-0 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2 text-sm">
+    <main data-kehikot-page data-kehikot-scroll="" className="flex h-screen min-w-0 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2 text-sm">
       {cover ? (
         <Cover
           state={cover}
