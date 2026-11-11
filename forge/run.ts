@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process'
  * This app holds no token and must not. The person running it is already logged
  * in to `gh` and, where there is a GitLab, to `glab`; those two programs own the
  * credential, refresh it, and know about enterprise hosts, SSO and proxies. It
- * matters more here than in Diff, which only reads: a review is posted UNDER
+ * matters more here than in a module that only reads: a review is posted UNDER
  * SOMEBODY'S NAME, and the only honest way for it to carry that name is for the
  * program that holds their login to be the one that sends it.
  *

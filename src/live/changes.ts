@@ -21,8 +21,8 @@ import { trackerReadingResult } from 'kehikot-module-protocol'
  * read has landed without one, at which point this gives up and says so,
  * because "asking…" for ever is a sentence that is not true.
  *
- * This is the same reading, with the same give-up rule, as Diff's
- * `live/heads.ts`. It differs in what it needs: Diff cannot fetch without the
+ * This is the same reading, with the same give-up rule, as a diff viewer's.
+ * It differs in what it needs: a diff viewer cannot fetch without the
  * head commit in a ref's DETAIL, and waits for it. Review reads the head from
  * the forge itself (see `forge/read.ts`), so a row is enough to begin, and the
  * detail's head — when it arrives — is kept only as a hint that the change has

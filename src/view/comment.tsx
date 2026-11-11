@@ -144,7 +144,7 @@ export function Who({ by }: { by: Comment['by'] }) {
 }
 
 /**
- * One point of the review, as a card: its code reference (pressing it points Source and Diff at the
+ * One point of the review, as a card: its code reference (pressing it points the file and diff viewers at the
  * lines), who wrote it and where it stands, its words, what a run said about it, the evidence
  * attached to it, and — while it is a draft — Edit, Keep and Remove.
  *

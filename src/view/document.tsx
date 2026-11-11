@@ -18,7 +18,7 @@ import { codeLabel, placeLabel, type Place } from './where.ts'
  * The review, as one document: what a person reads top to bottom and sends once.
  *
  * 1. **Verdict and summary**, with a review run's proposal beside them ("To get this approved:").
- * 2. **Points**, each a card with its code reference — pressing it points Source and Diff at those
+ * 2. **Points**, each a card with its code reference — pressing it points the file and diff viewers at those
  *    lines — its severity, the evidence attached to it, the challenge and the ruling, and Edit,
  *    Keep and Remove. A new point opens here when somebody asks for a comment at a place.
  * 3. **Evidence**: screenshots, run logs and test output kept beside the review.

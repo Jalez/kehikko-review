@@ -1,4 +1,4 @@
-import { MANIFEST_KIND, PROTOCOL, REVIEW_DRAFTS, manifestSchema, type Manifest } from 'kehikot-module-protocol'
+import { MANIFEST_KIND, MODULE_FOLDERS, PROTOCOL, REVIEW_DRAFTS, manifestSchema, moduleFolder, type Manifest } from 'kehikot-module-protocol'
 import pkg from './package.json'
 /* This module's introduction (protocol 2.57.0): slides the host shows in its introduction dialog. Also
    read as a file from the repository, so a person can watch it before the module runs or is installed. */
@@ -72,7 +72,7 @@ export const VERSION: string = pkg.version
  * asks it. Without the capability this page holds a string it cannot turn into
  * an address, and has nothing to review.
  *
- * It is asked with `detail: 'detail'`, the same question Diff asks, so the two
+ * It is asked with `detail: 'detail'`, the same question a diff viewer asks, so the
  * modules share one read at the tracker instead of making two; and the head
  * commit in that detail is used as a HINT that the change moved — never as the
  * head a comment is anchored to, which this app reads from the forge itself
@@ -88,13 +88,13 @@ export const VERSION: string = pkg.version
  * - **`trackers:refresh`.** That spends the person's rate limit on the whole
  *   project to learn what this app learns for one change by asking the forge
  *   directly.
- * - **`live:read`.** Diff declares it for the kind and URL of a ref. The
+ * - **`live:read`.** A diff viewer may declare it for the kind and URL of a ref. The
  *   tracker reading carries both, for every ref the project names and not only
  *   those of an epic with an imported state file, so there is nothing left for
  *   `live.get` to add here.
  * `location:set` (2.13.0): a point's code reference is a place in the change's code, and pressing
- * it says so to the kehikko (`location.set`, intent `show`), so Source opens the file at that line and
- * Diff scrolls there. Review no longer draws a diff of its own. It also reacts to `location`: when
+ * it says so to the kehikko (`location.set`, intent `show`), so a file viewer opens the file at that line and
+ * a diff viewer scrolls there. Review no longer draws a diff of its own. It also reacts to `location`: when
  * somebody asks for a comment at a place (intent `comment`), the page opens a new point there.
  *
  * `state:keep` (2.51.0): the host keeps one value per container — this module on this kehikko —
@@ -128,7 +128,7 @@ export const VERSION: string = pkg.version
  * opaque page's calls to its OWN server are cross-origin, so the server would
  * have to answer with a permissive CORS header — and this server has two doors
  * no stranger's page may open. `/api/diff` spends this machine's tracker login
- * on request, exactly as Diff's does. And `/api/send` POSTS UNDER IT: with a
+ * on request. And `/api/send` POSTS UNDER IT: with a
  * readable `/app`, any website in the browser could lift the write ticket and
  * submit an approval in the person's name.
  *
@@ -137,7 +137,7 @@ export const VERSION: string = pkg.version
  * the ticket printed in it — is unreadable from anywhere else. It also happens
  * to be true: this module keeps drafts.
  *
- * The honest caveat is Diff's: this shuts the BROWSER's door, not the socket.
+ * The honest caveat: this shuts the BROWSER's door, not the socket.
  * Anything already running as this user can find the ticket by fetching `/app`
  * itself. What the ticket separates is "this app's own page pressed Send" from
  * "another page in this browser did", and that door is shut.
@@ -227,8 +227,16 @@ export const MANIFEST: Manifest = manifestSchema.parse({
    * run's comments and proposal into the person's draft, beside their own — by the tools named here
    * on this module's MCP door — and to send a run's review without the person through `send`, which
    * takes only a module server that proves who it is (send/door.ts). Review never names who uses it.
+   *
+   * `module.folders` (protocol 2.85.0): the one folder under `.kehikot/` this module owns and is the
+   * only writer of (`store.ts`), so a module that shows the project's files can name its owner, and a
+   * data history keeps it (it is authored, not a rebuilt cache).
    */
   services: {
+    [MODULE_FOLDERS]: {
+      name: 'Review',
+      folders: [{ folder: moduleFolder(ID), says: 'Each change’s review: its points, summary, replies and sends, and the evidence beside it.', derived: false }],
+    },
     [REVIEW_DRAFTS]: {
       name: 'Review',
       tools: { comment: 'add_comment', propose: 'propose_review', drop: 'drop_run_comments' },

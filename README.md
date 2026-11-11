@@ -17,7 +17,7 @@ bun test && bun run typecheck
 
 ## What it is
 
-One container. Something else on the canvas — References, Journeys, anything —
+One container. Something else on the canvas — a tracker listing, a plan, anything —
 selects a pull request or merge request; this shows **the review of it**, read
 top to bottom:
 
@@ -31,9 +31,9 @@ top to bottom:
 4. **Replies**, on a change you authored: one per thread you received.
 5. **Send**, in two presses.
 
-Review draws no diff. **Source** shows the file at the change's head, and
-**Diff** shows the old and the new — at the place a point names (see "Source
-and Diff"). The server still checks every point against the change's real diff
+Review draws no diff. A file viewer on the canvas shows the file at the change's
+head, and a diff viewer shows the old and the new — at the place a point names
+(see "Pointing at the code"). The server still checks every point against the change's real diff
 when it is written.
 
 A person writes points on the page. An agent can write them too, over MCP, and
@@ -104,7 +104,7 @@ Three consequences worth knowing:
   refused when it is written, not re-aimed.
 
 On the page a point is written at a place: the one somebody asked for a comment
-at in Source or Diff ("New point at src/app.ts:42"), or a file and lines typed
+at in a file or diff viewer ("New point at src/app.ts:42"), or a file and lines typed
 after **New point…**. Either way it is a line of the whole change at its head.
 
 ## The review file
@@ -231,14 +231,14 @@ exactly the same is `<key>.json` renamed to `<key>.json.bak`, which nothing read
 again and which can be deleted once you are satisfied. If they differ, nothing is
 written and the JSON stays as it was.
 
-## Source and Diff
+## Pointing at the code
 
 A point's code reference is a place in the change's code (protocol 2.13.0,
 `location:set`). Pressing it calls `location.set` with intent `show` — the change
 as the canvas selection spells it (`gh#46`), the file, the first and last line,
 the side, and the commit the lines are counted at (the head for a new-side line
 of the whole change; none for a removed line, which counts on the base) — and
-Source opens the file there while Diff scrolls to it. The change on the page is
+a file viewer opens the file there while a diff viewer scrolls to it. The change on the page is
 always one of the selected changes, so there is nothing to select first; a press
 the host did not take says why, on the card.
 
@@ -263,8 +263,8 @@ calls: no shell, no `gh`, no `glab`, no file writes. None of them can send.
 | `/review-reply [ref]` | For a change you authored: a reply per thread you received, and what to change. You post them from the page. | `read_focus`, `read_change`, `read_diff`, `read_review`, `read_threads`, `draft_reply` |
 
 **`needs`: none.** None of the three needs another module on the kehikko:
-Source and Diff are where a person follows a code reference, and Checklist is
-where a checklist may be held — welcome, not required. So none is kehikko-bound,
+a file or diff viewer is where a person follows a code reference, and a checklist
+module is where a checklist may be held — welcome, not required. So none is kehikko-bound,
 and each is offered wherever Review is installed.
 
 ## What sending does

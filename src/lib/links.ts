@@ -5,7 +5,7 @@ import { isWebAddress, type AddressOpenResult } from 'kehikot-module-protocol'
  * (protocol 2.16.0, `address.open`).
  *
  * When the host answers `address.open`, a press on a link sends its address to
- * the canvas: a module there that shows pages (the Browser) opens it, and with
+ * the canvas: a module there that shows pages opens it, and with
  * none the host asks the person whether to open it in their browser or add one.
  * Either way this page does nothing more. With an older host, or an address the
  * protocol would not take, the link does what it always did: a new tab.

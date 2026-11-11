@@ -14,8 +14,8 @@ import type { Ran, Run, Runner } from './run.ts'
  *
  * ## Why this asks the forge and does not take the host's word for the head
  *
- * The host's tracker reading has a head commit in a ref's detail, and Diff uses
- * it. A review cannot: the head is what a comment is ANCHORED to and what an
+ * The host's tracker reading has a head commit in a ref's detail, and a diff
+ * viewer may use it. A review cannot: the head is what a comment is ANCHORED to and what an
  * approval is an approval OF, and the reading is a snapshot from whenever
  * somebody last refreshed. Approving "the head" on the strength of a
  * ten-minute-old reading is approving commits nobody looked at. So `describe`
@@ -214,7 +214,7 @@ export function diffCommand(target: Target, range: Range): Run | null {
   }
   if (range.view === 'all') {
     /*
-     * `glab mr diff --raw`, exactly as Diff runs it. `--raw` is not optional:
+     * `glab mr diff --raw`. `--raw` is not optional:
      * without it glab prints a diff dressed for a terminal, and the parser
      * reads unified diff and nothing else. `--color=never` is the same
      * argument about escape codes. This subcommand has no `--hostname`; it
@@ -509,7 +509,7 @@ export async function notes(run: Runner, target: Target): Promise<Read<Note[]>> 
 /**
  * What was fetched, keyed by the change, the view AND the commit.
  *
- * The key is the design, as it is in Diff: the identity of an entry includes
+ * The key is the design: the identity of an entry includes
  * the identity of its content, so a change that gets a new commit gets a new
  * key and there is no invalidation to reason about. A commit's own diff never
  * changes at all. The `all` view is filed under the head it was asked at.

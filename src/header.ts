@@ -11,7 +11,7 @@ import { LIMITS, type HeaderItemInput } from 'kehikot-module-protocol'
  * ## Ids
  *
  * The change is `c<n>`, by its place in the selection as the page last drew it.
- * The views are `review` and `shots`. Review draws no diff: Source and Diff do,
+ * The views are `review` and `shots`. Review draws no diff: the file and diff viewers on the canvas do,
  * at the place a point's code reference names.
  */
 
