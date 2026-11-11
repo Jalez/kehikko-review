@@ -1,6 +1,6 @@
 ---
 name: review-point
-description: Write ONE well-sourced review point at the place in a pull or merge request's code where the person is pointing (from Kehikot's Source or Diff, or given as path:line), into Kehikot's Review module as a draft for them to keep, edit or drop. Nothing is posted. Only a person runs it, by typing /review-point.
+description: Write ONE well-sourced review point at the place in a pull or merge request's code where the person is pointing (from a file or diff viewer on the kehikko, or given as path:line), into Kehikot's Review module as a draft for them to keep, edit or drop. Nothing is posted. Only a person runs it, by typing /review-point.
 argument-hint: "[path:line or path:first-last] [what the point is about]"
 disable-model-invocation: true
 allowed-tools: mcp__review__read_focus, mcp__review__read_diff, mcp__review__read_review, mcp__review__add_comment

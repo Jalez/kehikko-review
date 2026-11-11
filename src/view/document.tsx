@@ -506,7 +506,7 @@ function ProposalBox({ proposal, yours, disabled, onTake }: { proposal: Proposal
       ) : null}
       {proposal.sent ? (
         <p>
-          Sent by Factory at {proposal.sent.at}, at {short(proposal.sent.head)}.
+          Sent by an automated run at {proposal.sent.at}, at {short(proposal.sent.head)}.
         </p>
       ) : null}
       {error ? (
