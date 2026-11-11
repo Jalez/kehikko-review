@@ -67,6 +67,7 @@ import {
 import { parseDiff, totals } from './src/diff/parse.ts'
 import { changeDraft, forgetProof, keepProofFile, listDrafts, readDraftFor, readProofFile, reviewText } from './store.ts'
 import { focusOf, keepFocus, printFocus } from './focus.ts'
+import { SEND_PATH } from './send/path.ts'
 
 /**
  * Every door but the page, as one function: `answer` takes a request and
@@ -230,8 +231,8 @@ async function writeComment(deps: Deps, projectPath: string | null, target: Targ
   if (!body.ok) return body
   const path = str(input.path, MAX_PATH)
   if (!path) return { ok: false, error: 'A comment names a file by its path in the diff.' }
-  const side: Side | null = input.side === undefined || input.side === null ? 'new' : input.side === 'new' || input.side === 'old' ? input.side : null
-  if (!side) return { ok: false, error: 'side is "new" or "old": which column of line numbers the line is from. Left out, it is "new".' }
+  const side: Side | null = input.side === undefined || input.side === null ? 'new' : input.side === 'new' || input.side === 'RIGHT' ? 'new' : input.side === 'old' || input.side === 'LEFT' ? 'old' : null
+  if (!side) return { ok: false, error: 'side is "new" (or RIGHT) or "old" (or LEFT): which column of line numbers the line is from. Left out, it is "new".' }
   if (typeof input.line !== 'number') return { ok: false, error: 'line is a whole number, counted from 1.' }
   if (input.startLine !== undefined && input.startLine !== null && typeof input.startLine !== 'number') {
     return { ok: false, error: 'start_line is a whole number, counted from 1.' }
@@ -282,7 +283,7 @@ async function writeComment(deps: Deps, projectPath: string | null, target: Targ
     }
   }
 
-  /* A run's point is stamped with the head the forge named just now: the Factory send compares it
+  /* A run's point is stamped with the head the forge named just now: a run's send compares it
      with the head at the moment of sending, and a point read at another head is not sent. */
   const stamped = meta ? { ...meta, head: described.head } : undefined
   const written = changeDraft(projectPath, target, (draft) =>
@@ -309,7 +310,7 @@ const sending = new Set<string>()
 
 /**
  * Run `work` holding the change's send lock, or answer 409 when a send of the same change in the
- * same project is already under way — whichever door it came through, the page's or Factory's.
+ * same project is already under way — whichever door it came through, the page's or a run's (send/door.ts).
  */
 export async function underLock(projectPath: string | null, target: Target, work: () => Promise<Reply>): Promise<Reply> {
   const lock = `${projectPath ?? ''}|${keyOf(target)}`
@@ -329,10 +330,10 @@ export interface Delivery {
   summary: string
   /**
    * `person`: the page's send. The person's summary is cleared the moment it is posted and the
-   * verdict once everything went. `run`: Factory's send of a review run. The person's summary and
+   * verdict once everything went. `run`: another module's send of a review run, `caller` the module proved to have sent it. The person's summary and
    * verdict are never read or written; the run's proposal is marked sent when everything went.
    */
-  by: { kind: 'person' } | { kind: 'run'; run: string }
+  by: { kind: 'person' } | { kind: 'run'; run: string; caller: string }
   /** A last look at the change as the forge says it is now, before anything is posted. A sentence refuses (409). */
   check?(facts: Facts): string | null
 }
@@ -376,7 +377,7 @@ export async function deliver(deps: Deps, projectPath: string | null, target: Ta
           ? { ...was, proposal: { ...was.proposal, sent: { at: deps.now(), head: made.plan.head } } }
           : was
     }
-    const notes = by.kind === 'run' ? [`Sent by an automated run for review run ${by.run}, without the person.`, ...report.notes] : report.notes
+    const notes = by.kind === 'run' ? [`Sent by ${by.caller} for review run ${by.run}, without the person.`, ...report.notes] : report.notes
     return reached
       ? logSend(
           settled,
@@ -552,7 +553,7 @@ function listed() {
           path: { type: 'string', description: 'The file, by the path the diff prints for it.' },
           line: { type: 'integer', description: 'The line number, from the column `side` names. The last line when commenting on a range.' },
           start_line: { type: 'integer', description: 'The first line of a range, on the same side. Leave out for a single line.' },
-          side: { type: 'string', enum: ['new', 'old'], description: '"new" (default): the second number column, for added and unchanged lines. "old": the first, for removed lines.' },
+          side: { type: 'string', enum: ['new', 'old', 'RIGHT', 'LEFT'], description: '"new" (default; RIGHT is the same): the second number column, for added and unchanged lines. "old" (LEFT is the same): the first, for removed lines.' },
           body: { type: 'string', description: `The comment, as it would be posted. Markdown. At most ${MAX_BODY} characters.` },
           meta: META_SCHEMA,
         },
@@ -1024,10 +1025,10 @@ export async function answer(
 
   if (!path.startsWith('/api/')) return null
 
-  /* Factory's send is answered by its own middleware (factory/door.ts), which reads the key from a
-     header this function is never given. Here it is not a route at all: not for the page's ticket,
+  /* A run's send is answered by its own middleware (send/door.ts), which proves the caller from
+     headers this function is never given. Here it is not a route at all: not for the page's ticket,
      not for anything else. */
-  if (path === '/api/factory' || path.startsWith('/api/factory/')) return bad('not here', 404)
+  if (path === SEND_PATH || path.startsWith(`${SEND_PATH}/`)) return bad('not here', 404)
 
   /* ---- reads: ungated. They show nothing the person's own `gh` would not. ---- */
 

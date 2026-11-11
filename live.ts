@@ -14,7 +14,7 @@ import { keyOf } from './review/key.ts'
  * `/api/draft` again, the door it already reads.
  *
  * News is published where a review changes: every write of one (`changed`, from `changeDraft` in
- * `store.ts` — the page's presses, an agent's MCP tools, Factory's send), and a watcher over the
+ * `store.ts` — the page's presses, an agent's MCP tools, a run's send), and a watcher over the
  * project's `.kehikot/review/` while a page follows the review, for a file somebody edited by hand.
  *
  * The forge is not asked here: `/api/change` reads the tracker when the page asks for it, and the

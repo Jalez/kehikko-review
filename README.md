@@ -39,9 +39,9 @@ when it is written.
 A person writes points on the page. An agent can write them too, over MCP, and
 Review provides the skills that make it write them well (see "The review
 skills"). **Only the person sends**, only what they kept, and only after reading
-exactly what will be posted — except a review run Factory sends for a two-way
-change that touches nothing people see, through a door of its own (see
-"Factory's send").
+exactly what will be posted — except a review run another module sends for a
+two-way change that touches nothing people see, through a route of its own (see
+"The review.drafts service").
 
 It holds no token. Everything it reads and everything it posts goes through
 `gh` or `glab` on this machine, run from this app's own server with no shell,
@@ -218,7 +218,7 @@ None.
   under it (`Kept:`, `Sent:`, `Resolved:`), or the file is refused.
 
 The page re-reads the review when this app's server says it changed (every
-write — the page's, an agent's, Factory's send — and a hand edit of the file,
+write — the page's, an agent's, a run's send — and a hand edit of the file,
 over one held stream that is closed while the page is hidden) and when the
 window regains focus, so a point an agent adds appears at once, without a
 reload. It never re-reads on a clock. Bounds: 10,000
@@ -258,7 +258,7 @@ calls: no shell, no `gh`, no `glab`, no file writes. None of them can send.
 
 | skill | what it does | may call |
 | --- | --- | --- |
-| `/review-pass [ref]` | One careful single-agent review of the picked change, by the rules of `/review-factory`: anchored, sourced, short, plain; one issue one point; its own strongest challenge and ruling on each; every checklist item answered; the path to success; approves when nothing blocks. Writes points (`run: review-pass`), evidence and a proposal. | `read_focus`, `read_change`, `read_diff`, `read_review`, `read_review_md`, `add_comment`, `add_evidence`, `propose_review`, `drop_run_comments` |
+| `/review-pass [ref]` | One careful single-agent review of the picked change, by the rules of a review run: anchored, sourced, short, plain; one issue one point; its own strongest challenge and ruling on each; every checklist item answered; the path to success; approves when nothing blocks. Writes points (`run: review-pass`), evidence and a proposal. | `read_focus`, `read_change`, `read_diff`, `read_review`, `read_review_md`, `add_comment`, `add_evidence`, `propose_review`, `drop_run_comments` |
 | `/review-point [path:line] [about]` | ONE well-sourced point at the place somebody is pointing (from `read_focus`) or the one given. | `read_focus`, `read_diff`, `read_review`, `add_comment` |
 | `/review-reply [ref]` | For a change you authored: a reply per thread you received, and what to change. You post them from the page. | `read_focus`, `read_change`, `read_diff`, `read_review`, `read_threads`, `draft_reply` |
 
@@ -378,7 +378,7 @@ comment the person wrote or a point the person kept, and `set_verdict` cannot re
 verdict the person set (the draft records who set each; a summary in a draft
 from before that is read as the person's). An agent may change its own.
 
-### Review runs (Factory's `/review-factory`)
+### Review runs
 
 - `add_comment` takes an optional `meta` for a point a run wrote:
   `{ run, severity: 'blocking'|'risk'|'nice', evidence: [{ kind: 'line'|'test'|'doc'|'practice', ref, quote? }] (at least one), challenge?, ruling: 'required'|'optional', reason, checklist? }`.
@@ -421,37 +421,51 @@ from before that is read as the person's). An agent may change its own.
 
 **There is no tool that sends.** Nothing an agent does through this door
 reaches a tracker, a reply included. The page's send wants a ticket only the page holds, and
-Factory's send (below) wants a key no agent is given.
+a run's send (below) takes only a module's server that proves who it is.
 
-## Factory's send
+## The review.drafts service
 
-The one send that is not the person's: Factory posting a review run, for a
-change the person said may be reviewed without them.
+Review provides the protocol's `review.drafts` service (2.83.0). Its manifest says,
+at the top level:
+
+```ts
+services: {
+  'review.drafts': {
+    name: 'Review',
+    tools: { comment: 'add_comment', propose: 'propose_review', drop: 'drop_run_comments' },
+    send: '/api/drafts/send',
+  },
+}
+```
+
+Another module finds it through the host (`services.find`) and calls the tools the
+descriptor names on this module's MCP door. Review never names who uses it. `add_comment`
+takes the service's `side` words, `RIGHT` and `LEFT`, as "new" and "old".
+
+`send` is the one send that is not the person's: a review run posted by another
+module, for a change the person said may be reviewed without them.
 
 ```
-POST /api/factory/send           { project, change, run }
-X-Kehikot-Factory-Key: <the key>
+POST /api/drafts/send           { project, change, run }
+x-kehikot-caller: <the module's id>
+x-kehikot-pass:   <a pass that module minted>
 ```
 
-- **The key** is 32 random bytes as hex in `review-factory.key`, in
-  `KEHIKOT_KEYS_DIR` or `~/Library/Application Support/Kehikot/keys/` (the XDG
-  data dir off macOS). Review makes it on its first start, mode 0600 in a
-  folder made 0700; a file others can read is closed to them before use, and a
-  link, a folder or another user's file is refused. It is compared in constant
-  time and printed nowhere.
-- **Who reaches it.** Without the header it is not a route: the request goes on
-  to the page's doors, which answer 404 (they refuse every `/api/factory/*`,
-  ticket or not). With it, a browser — another origin, or this app's own page —
-  is refused (403); only a program (no `Origin`, no `Sec-Fetch-Site`) gets as
-  far as the key. It is answered by its own middleware (`factory/door.ts`),
-  placed before the protocol's doors because it needs a header they do not
-  pass on.
+- **Who reaches it.** Only a module's server that proves who it is: Review asks
+  the named module, at the address it registered on this computer, whether it
+  minted the pass (`vouchCaller` from the protocol). No key is kept on disk. A
+  browser — another origin, or this app's own page — is refused (403) before
+  anybody is asked; only a program (no `Origin`, no `Sec-Fetch-Site`) gets as
+  far as the proof. The page's doors answer the path 404, ticket or not. It is
+  answered by its own middleware (`send/door.ts`), placed before the protocol's
+  doors because it needs headers they do not pass on. There is no MCP tool for it.
 - **What it sends.** That run's unsent comments and its proposal's summary
   (with "To get this approved:") and verdict. Never the person's comments,
   summary or verdict, which stay in the draft as they were. The proposal is
-  marked sent, and the send is filed in the draft's history as Factory's.
-- **What it refuses**, with a sentence and nothing posted: no key file (503); a
-  wrong key (403); a body without project, change and run (400); a run with no
+  marked sent, and the send is filed in the draft's history under the module
+  that sent it.
+- **What it refuses**, with a sentence and nothing posted: a sender that does not
+  prove which module it is (403); a body without project, change and run (400); a run with no
   proposal, another run's proposal, or one already sent (409); a **one-way**
   change (409); a change that touches **what people see** (409); required
   points under any verdict but a request for changes (409); a change that is
@@ -511,9 +525,9 @@ when one does not load, the view says so.
 
 `bun test` runs every function that talks to a tracker against a runner that
 starts nothing (`test/fake.ts`): the command lines are asserted as arrays, and
-the send path as the exact JSON it would post. Factory's send is tested refusal
-by refusal with nothing posted, and the key lives in a scratch folder
-(`KEHIKOT_KEYS_DIR`, set by `test/setup.ts`). **No review, comment, approval
+the send path as the exact JSON it would post. A run's send is tested refusal
+by refusal with nothing posted, with the caller's proof faked and through the
+protocol's own `vouchCaller` against a scratch registry. **No review, comment, approval
 or note was posted to a real tracker to build or test this.** The read
 endpoints were run against real public changes.
 
@@ -540,8 +554,8 @@ review/key.ts       the file name a change's review is kept under
 review/send.ts      the plan (pure) and the executor
 review/print.ts     a diff and a draft as text for an agent
 review/shots.ts     the Before / after pictures: found, labelled, allowed, paired (pure)
-factory/key.ts      the Review–Factory key
-factory/door.ts     Factory's send: its rules and its middleware
+send/path.ts        the review.drafts send route
+send/door.ts        a run's send: its rules and its middleware
 forge/threads.ts    the review comments a change received, and posting a reply
 store.ts            <project>/.kehikot/review/<key>.md and <key>/, and the move from JSON
 evidence.ts         what may be kept as evidence, and from where

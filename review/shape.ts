@@ -47,7 +47,7 @@ export type EvidenceKind = (typeof EVIDENCE_KINDS)[number]
 export const DOORS = ['one-way', 'two-way'] as const
 export type Door = (typeof DOORS)[number]
 
-/** A run's id: what Factory names one review run by. Letters, digits and `._:-`, so it is safe in a sentence and a file. */
+/** A run's id: what one review run is named by. Letters, digits and `._:-`, so it is safe in a sentence and a file. */
 export const RUN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/
 export const MAX_EVIDENCE = 10
 export const MAX_REF = 600
@@ -85,14 +85,14 @@ export interface Meta {
   checklist?: string[]
   /**
    * The head the change had when this comment was written, as the forge said. Stamped by the
-   * server, never taken from the caller: it is what the Factory send compares against "now".
+   * server, never taken from the caller: it is what a run's send compares against "now".
    */
   head?: string
 }
 
 /**
  * A run's summary and verdict, kept BESIDE the person's and never over them. The person can take
- * either with one press; Factory can send it only through its own door, and only when it may.
+ * either with one press; another module can send it only through the send route (send/door.ts), and only when it may.
  */
 export interface Proposal {
   run: string
@@ -107,7 +107,7 @@ export interface Proposal {
   at: string
   /** When the person took its summary or its verdict into their own. */
   taken?: { summary?: string; verdict?: string }
-  /** When Factory sent it, and at which head. */
+  /** When it was sent without the person, and at which head. */
   sent?: { at: string; head: string }
 }
 

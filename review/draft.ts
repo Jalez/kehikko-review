@@ -205,7 +205,7 @@ const text = (value: unknown, max: number, name: string, required: boolean): { o
   return { ok: true, value: trimmed || undefined }
 }
 
-export const RUN_SAYS = 'A run is named by an id of letters, digits and . _ : - (at most 80), the one Factory gave it.'
+export const RUN_SAYS = 'A run is named by an id of letters, digits and . _ : - (at most 80), the one whoever runs it gave it.'
 
 export const runOf = (value: unknown): string | null => (typeof value === 'string' && RUN.test(value) ? value : null)
 
@@ -322,7 +322,7 @@ export function takeProposal(draft: Draft, which: 'summary' | 'verdict', run: un
   return { ok: false, error: 'Take the summary or the verdict.' }
 }
 
-/** Whether a comment is one a run wrote: an agent's, unsent, with that run's meta. What Factory's send posts. */
+/** Whether a comment is one a run wrote: an agent's, unsent, with that run's meta. What a run's send posts. */
 export const ofRun = (comment: Comment, run: string): boolean => comment.by === 'agent' && !comment.sent && comment.meta?.run === run
 
 /** Whether a re-run may replace it: one of the run's own points that the person has not kept. */

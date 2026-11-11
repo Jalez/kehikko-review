@@ -36,7 +36,7 @@ import { OutLink } from './out-link.tsx'
  * - The CHANGE (what it is, its head, its commits) — from the tracker, through this app's server.
  *   Asked when the page opens on a change and again when the host's reading says the head moved.
  * - The REVIEW — from a file in the project. Re-read whenever this app's server says it changed
- *   (`api.draftChanges`: an agent's MCP write, Factory's send, a hand edit), and when the window
+ *   (`api.draftChanges`: an agent's MCP write, a run's send, a hand edit), and when the window
  *   regains focus, so a point an agent adds appears without anybody reloading. Never on a clock.
  *
  * A failure of one is drawn where that one would have been, in the tracker's own words, and does not
@@ -68,7 +68,7 @@ function Failure({ error, onAgain }: { error: string; onAgain: () => void }) {
 
 /** What a press on a code reference is told when it was not taken, in a sentence. Null when it was. */
 export function locatedSaid(result: LocationSetResult | null): string | null {
-  if (!result) return 'Nothing is framing this page, so there is no Source or Diff to show those lines in.'
+  if (!result) return 'Nothing is framing this page, so there is no module beside it to show those lines in.'
   if (result.outcome === 'taken') return null
   if (result.outcome === 'not-selected') return `Kehikot did not point there: this change is not selected on the canvas any more.${result.why ? ` ${result.why}` : ''}`
   return `Kehikot did not point there${result.why ? `: ${result.why}` : '.'}`

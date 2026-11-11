@@ -6,7 +6,7 @@ import { doors, originFor, serves } from 'kehikot-module-protocol/serve'
 import { defineConfig, type Plugin } from 'vite'
 
 import { BUILD, MANIFEST, TICKET, answer, stream, ours } from './doors.ts'
-import { factoryDoor } from './factory/door.ts'
+import { sendDoor } from './send/door.ts'
 import { ID, PREFERRED_PORT, servingAt } from './manifest.ts'
 
 /**
@@ -53,10 +53,9 @@ export default defineConfig({
   plugins: [
     serves({ id: ID, prefer: PREFERRED_PORT }),
     listening(),
-    /* Before `doors()`: Factory's send needs its key header, which `answer` is not given. It
-       makes the key on the first start. Without the header the request goes on to `doors()`,
-       which answers it 404. The same function is `run({ before })` in serve.ts. See factory/door.ts. */
-    factoryDoor(),
+    /* Before `doors()`: a run's send proves its caller from headers `answer` is not given. Every
+       other path goes on to `doors()`. The same function is `run({ before })` in serve.ts. See send/door.ts. */
+    sendDoor(),
     doors({
       manifest: MANIFEST,
       answer,
