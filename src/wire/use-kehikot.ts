@@ -85,6 +85,8 @@ export interface Host {
    * its own timeout. Called once, by `Screen`. Absent in a test that draws no host.
    */
   ready?: ProtocolHost['ready']
+  /** Say the page is reading what a new selection asks for (2.84.0): the host may cover it in these words. Absent in a test that draws no host. */
+  loading?: ProtocolHost['loading']
 }
 
 export function useKehikot(): Host {
@@ -133,7 +135,8 @@ export function useKehikot(): Host {
       read: host.read,
       remember: host.remember,
       ready: host.ready,
+      loading: host.loading,
     }),
-    [host.kept, host.read, host.remember, host.ready, host.where, host.request, host.location, host.locate, handsAddresses, hostOpenAddress, host.header, host.footer, host.drawsFooter, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
+    [host.kept, host.read, host.remember, host.ready, host.loading, host.where, host.request, host.location, host.locate, handsAddresses, hostOpenAddress, host.header, host.footer, host.drawsFooter, pressed, host.project, host.projectPath, host.projectId, host.epic, host.theme, selection, trackerAt],
   )
 }
