@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { HELP_LIMITS, MODULE_ID, helpOf, manifestSchema, moduleFolder } from 'kehikot-module-protocol'
+import { HELP_LIMITS, MODULE_ID, REVIEW_DRAFTS, SERVICES, helpOf, manifestSchema, moduleFolder } from 'kehikot-module-protocol'
+
+import { REAL, answer } from '../doors.ts'
+import { SEND_PATH } from '../send/door.ts'
 
 import { HELP, ID, MANIFEST, PREFERRED_PORT } from '../manifest.ts'
 
@@ -69,5 +72,28 @@ describe('How to use (protocol 2.52.0)', () => {
 
   test('says what it shows, how to use it and what agents can do', () => {
     expect(HELP.sections.map((section) => section.title)).toEqual(expect.arrayContaining(['What it shows', 'How to use it', 'What agents can do']))
+  })
+})
+
+describe('the review.drafts service (protocol 2.83.0)', () => {
+  const descriptor = MANIFEST.services?.[REVIEW_DRAFTS]
+
+  test('is declared, and parses with the protocol’s schema for it', () => {
+    /* A descriptor that does not parse makes the manifest drop the whole field, so its absence is the failure. */
+    expect(descriptor).toBeDefined()
+    expect(SERVICES[REVIEW_DRAFTS].schema.safeParse(descriptor).success).toBe(true)
+    expect(descriptor).toEqual({
+      name: 'Review',
+      tools: { comment: 'add_comment', propose: 'propose_review', drop: 'drop_run_comments' },
+      send: SEND_PATH,
+    })
+  })
+
+  test('names only tools this module’s MCP door lists', async () => {
+    const reply = await answer('POST', '/mcp', new URLSearchParams(), { jsonrpc: '2.0', id: 1, method: 'tools/list' }, null, REAL)
+    const listed = ((reply?.body as { result?: { tools?: { name: string }[] } }).result?.tools ?? []).map((tool) => tool.name)
+    expect(listed.length).toBeGreaterThan(0)
+    const parsed = SERVICES[REVIEW_DRAFTS].schema.parse(descriptor)
+    for (const tool of Object.values(parsed.tools)) expect(listed).toContain(tool)
   })
 })

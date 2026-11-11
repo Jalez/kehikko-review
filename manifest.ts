@@ -1,10 +1,11 @@
-import { MANIFEST_KIND, PROTOCOL, manifestSchema, type Manifest } from 'kehikot-module-protocol'
+import { MANIFEST_KIND, PROTOCOL, REVIEW_DRAFTS, manifestSchema, type Manifest } from 'kehikot-module-protocol'
 import pkg from './package.json'
 /* This module's introduction (protocol 2.57.0): slides the host shows in its introduction dialog. Also
    read as a file from the repository, so a person can watch it before the module runs or is installed. */
 import intro from './intro.json'
 
 import { PREFERRED_PORT } from './port.ts'
+import { SEND_PATH } from './send/path.ts'
 import { serveFrom, skillDeclarations } from './skills.ts'
 
 export { PREFERRED_PORT }
@@ -221,6 +222,19 @@ export const MANIFEST: Manifest = manifestSchema.parse({
     skills: skillDeclarations(),
   },
   health: '/healthz',
+  /**
+   * `review.drafts` (protocol 2.83.0): what another module finds, through the host, to put a review
+   * run's comments and proposal into the person's draft, beside their own — by the tools named here
+   * on this module's MCP door — and to send a run's review without the person through `send`, which
+   * takes only a module server that proves who it is (send/door.ts). Review never names who uses it.
+   */
+  services: {
+    [REVIEW_DRAFTS]: {
+      name: 'Review',
+      tools: { comment: 'add_comment', propose: 'propose_review', drop: 'drop_run_comments' },
+      send: SEND_PATH,
+    },
+  },
 })
 
 /** Say the origin this process really serves on, once it is listening: the skills' text and version follow. */

@@ -192,6 +192,16 @@ describe('writing through the page’s API', () => {
     expect(draftOf(await get('/api/draft', { projectPath: dir, url: GH_URL })).comments).toHaveLength(2)
   })
 
+  test('RIGHT and LEFT (the review.drafts service’s words) are the new and the old side', async () => {
+    const dir = project()
+    const { post } = world()
+    const right = await post('/api/comment', comment(dir, { side: 'RIGHT' }))
+    expect(draftOf(right).comments[0]).toMatchObject({ side: 'new', line: 11 })
+    /* Whether old line 11 is in the diff is the anchor's business; LEFT is not refused as a side. */
+    const left = await post('/api/comment', comment(dir, { side: 'LEFT' }))
+    expect(errorOf(left)).not.toContain('side is')
+  })
+
   test('a comment that points at nothing is refused with the reason, and nothing is written', async () => {
     const dir = project()
     const { post, get } = world()

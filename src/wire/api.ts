@@ -53,7 +53,7 @@ export interface Api {
   draft(projectPath: string, url: string): Promise<Draft>
   /**
    * Hear when the review changed: once as the stream opens (and again each time it reopens, after a
-   * drop or when the page is shown again), then at every write — the person's, an agent's, Factory's
+   * drop or when the page is shown again), then at every write — the person's, an agent's, a run's
    * send, or a hand edit of the file. Never on a clock, and nothing while the page is hidden. Returns
    * the function that stops it.
    */

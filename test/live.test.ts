@@ -6,13 +6,12 @@ import { join } from 'node:path'
 import { watching } from 'kehikot-module-protocol/serve'
 
 import { TICKET, answer, stream, type Deps } from '../doors.ts'
-import { factorySend } from '../factory/door.ts'
-import { KEY_FILE, ensureKey } from '../factory/key.ts'
 import { locate } from '../forge/locate.ts'
 import { forget } from '../forge/read.ts'
 import type { Run } from '../forge/run.ts'
 import { EVENTS_PATH, NEWS, stopWatching, topicOf, watcherCount } from '../live.ts'
 import { keyOf } from '../review/key.ts'
+import { sendRun } from '../send/door.ts'
 import { reviewText } from '../store.ts'
 
 import { GH_PULL, GH_URL, fake, githubReads, isPost, pathOf } from './fake.ts'
@@ -20,7 +19,7 @@ import { GH_PULL, GH_URL, fake, githubReads, isPost, pathOf } from './fake.ts'
 /**
  * The page's stream: the server says when a review changed, so the page never asks on a clock. Each
  * test opens the stream the way the doors do (`stream(method, path, query, emit)`), writes the review
- * down one of the real paths — the page's press, an agent's tool, Factory's send, a hand edit — and
+ * down one of the real paths — the page's press, an agent's tool, a run's send, a hand edit — and
  * checks the news arrived.
  */
 
@@ -96,12 +95,9 @@ describe('news is published where a review is written', () => {
     expect(heard).toEqual([NEWS, NEWS, NEWS])
   })
 
-  test('Factory\'s send', async () => {
+  test('a run\'s send', async () => {
     const dir = project()
     const w = world()
-    const file = join(home, `keys${n}`, KEY_FILE)
-    const made = ensureKey(file)
-    if (!made.ok) throw new Error(made.error)
     const meta = { run: 'run-1', severity: 'blocking', evidence: [{ kind: 'line', ref: 'src/one.ts:11' }], ruling: 'required', reason: 'It breaks the parser.' }
     await w.tool('add_comment', { project: dir, change: GH_URL, path: 'src/one.ts', line: 11, body: 'Point.', meta })
     await w.tool('propose_review', {
@@ -111,7 +107,7 @@ describe('news is published where a review is written', () => {
     const heard = follow(dir)
     stopWatching() /* only the write itself can publish now */
     expect(heard).toEqual([NEWS])
-    const reply = await factorySend(w.deps, made.key, { project: dir, change: GH_URL, run: 'run-1' }, file)
+    const reply = await sendRun(w.deps, 'kehikot.caller', { project: dir, change: GH_URL, run: 'run-1' })
     expect(reply.status).toBe(200)
     await settle()
     /* At least one piece of news after the opening one. The send's first write watches the folder again,

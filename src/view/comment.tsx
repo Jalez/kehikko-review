@@ -233,7 +233,7 @@ export function PointCard({
         <button
           type="button"
           className="min-w-0 flex-1 truncate text-left font-mono text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
-          title={`Show ${comment.path} at ${comment.startLine !== undefined ? `lines ${comment.startLine}–${comment.line}` : `line ${comment.line}`} in Source and Diff`}
+          title={`Show ${comment.path} at ${comment.startLine !== undefined ? `lines ${comment.startLine}–${comment.line}` : `line ${comment.line}`} in the modules that show code`}
           data-code={comment.id}
           onClick={onLocate}
         >

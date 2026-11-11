@@ -272,7 +272,7 @@ export function ReviewDocument({
           <ul className="flex min-w-0 flex-col gap-1.5">{waiting.map(card)}</ul>
         ) : (
           <p className="text-muted-foreground">
-            No draft points. Point at a line in Source or Diff and ask for a comment there, press New point, or run /review-pass in Claude Code.
+            No draft points. Point at a line in a module that shows the code and ask for a comment there, press New point, or run /review-pass in Claude Code.
           </p>
         )}
         {gone.length ? (
@@ -448,7 +448,7 @@ function NewPoint({ asked, onAsked, onAdd }: { asked: Place | null; onAsked(): v
       <Button type="button" size="sm" className={SMALL} disabled={!typed} onClick={() => setChosen(typed)}>
         Write the point
       </Button>
-      <span className="w-full text-muted-foreground">Lines of the whole change at its head, as Diff and Source number them.</span>
+      <span className="w-full text-muted-foreground">Lines of the whole change at its head, as the modules that show code number them.</span>
     </div>
   )
 }

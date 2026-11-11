@@ -4,6 +4,7 @@ import {
   beforeHandler,
   readJsonRequest,
   resolveDoorProject,
+  vouchCaller,
   type Before,
   type DoorHandler,
   type Reply,
@@ -16,21 +17,25 @@ import type { Facts } from '../review/send.ts'
 import { short, type Draft } from '../review/shape.ts'
 import { readDraftFor } from '../store.ts'
 
-import { KEY_HEADER, ensureKey, keyFile, loadKey, sameKey } from './key.ts'
+import { SEND_PATH } from './path.ts'
+
+export { SEND_PATH }
 
 /**
- * The one send that is not the person's: Factory posting a review run's comments and proposal
- * (contract C4), for a change the person said may be reviewed without them.
+ * The one send that is not the person's: another module posting a review run's comments and
+ * proposal, for a change the person said may be reviewed without them. It is the `send` route of
+ * the `review.drafts` service this module provides (manifest.ts); whoever consumes the service
+ * finds it there, and Review never knows which module that is.
  *
  * ## Who can reach it
  *
- * - Only a request carrying `X-Kehikot-Factory-Key`. Without the header this is not a route: the
- *   middleware hands the request on, unread, and the page's doors answer it 404 like any path they
- *   do not have (`answer` in doors.ts refuses every `/api/factory/*`, ticket or not).
+ * - Only a module's SERVER that proves who it is: the request names the module and carries a pass
+ *   it minted, and `vouchCaller` asks that module, at the address it registered on this computer,
+ *   whether it did. No secret is kept on disk; an agent, a page or any other program cannot pass.
  * - Only a program. A browser — another origin, or this app's own page — is refused before the
- *   key is looked at. Factory's server asks with no `Origin` and no `Sec-Fetch-Site`.
- * - Only with the key, compared in constant time (`sameKey`). No key file: 503, nothing read.
- * - Never over MCP. There is no tool for it, and no agent is handed the key.
+ *   caller is asked about. A module's server asks with no `Origin` and no `Sec-Fetch-Site`.
+ * - Never through the page's doors: `answer` in doors.ts answers this path 404, ticket or not.
+ * - Never over MCP. There is no tool for it.
  *
  * ## What it refuses (409, a sentence, nothing posted)
  *
@@ -43,8 +48,6 @@ import { KEY_HEADER, ensureKey, keyFile, loadKey, sameKey } from './key.ts'
  * Exactly that run's unsent comments and its proposal's summary (with "To get this approved:") and
  * verdict. Never the person's comments, summary or verdict: those stay in the draft as they were.
  */
-
-export const FACTORY_PATH = '/api/factory/send'
 
 /** Whether a run's review may go out without the person, before the forge is asked: a sentence when it may not. */
 export function refusalFor(draft: Draft, run: string): string | null {
@@ -77,13 +80,10 @@ export function movedFor(draft: Draft, run: string, facts: Facts): string | null
 }
 
 /**
- * Factory's send, given the key it presented. Every refusal is a reply with a sentence and
- * nothing posted. `file` is where the key is read from (the machine's, unless a test says).
+ * A run's send, from `caller`: the module whose server was proved to have asked (`vouchCaller`).
+ * Every refusal is a reply with a sentence and nothing posted.
  */
-export async function factorySend(deps: Deps, carried: string | null, body: Record<string, unknown> | null, file: string = keyFile()): Promise<Reply> {
-  const key = loadKey(file)
-  if (!key.ok) return bad(`This Review has no Factory key to compare with: ${key.error}`, 503)
-  if (!sameKey(carried, key.key)) return bad('That is not this Review’s Factory key.', 403)
+export async function sendRun(deps: Deps, caller: string, body: Record<string, unknown> | null): Promise<Reply> {
   if (!body) return bad('Send { project, change, run } as JSON.')
 
   const named = typeof body.project === 'string' && body.project.length <= 4096 ? body.project : ''
@@ -111,11 +111,11 @@ export async function factorySend(deps: Deps, carried: string | null, body: Reco
       ids,
       verdict: proposal.verdict,
       summary: proposalBody(proposal),
-      by: { kind: 'run', run },
+      by: { kind: 'run', run, caller },
       check: (facts) => movedFor(draft, run, facts),
     })
   })
-  /* Factory is told what happened, not handed the person's draft. */
+  /* The caller is told what happened, not handed the person's draft. */
   if (reply.status !== 200) return reply
   const said = reply.body as { report: unknown }
   return { status: 200, body: { ok: true, report: said.report, ...(at.movedFrom ? { said: DOOR_PROJECT_SAYS.followed(at.movedFrom, at.path) } : {}) } }
@@ -129,36 +129,35 @@ function json(answer: Reply): Response {
   })
 }
 
+/** Proves which module's server sent a request; `vouchCaller` unless a test says. */
+export type Vouch = (headers: Headers) => Promise<{ ok: true; module: string } | { ok: false; why: string }>
+
+const VOUCH: Vouch = (headers) => vouchCaller(headers)
+
 /**
- * Factory's door as ONE function from a request to an answer, asked before the protocol's doors on
- * both servers: on Vite by `factoryDoor()` below, and on the built page by `run({ before })` in
- * serve.ts — so the two cannot disagree about who may send. `undefined` is "not this route": the
- * request goes on to the doors unread, which answer it 404. `file` says where the key is, read per
- * request so a key replaced on disk is the one compared.
+ * The send as ONE function from a request to an answer, asked before the protocol's doors on both
+ * servers: on Vite by `sendDoor()` below, and on the built page by `run({ before })` in serve.ts —
+ * so the two cannot disagree about who may send. `undefined` is "not this route": the request goes
+ * on to the doors unread.
  */
-export function factoryBefore(deps: Deps = REAL, file: () => string = () => keyFile()): Before {
+export function sendBefore(deps: Deps = REAL, vouch: Vouch = VOUCH): Before {
   return async (request, { asker, url }) => {
-    const carried = request.headers.get(KEY_HEADER) || null
-    if (url.pathname !== FACTORY_PATH || !carried) return undefined
-    if (asker !== 'program') return json(bad('This door answers Factory, a program on this computer, and nothing in a browser.', 403))
-    if (request.method.toUpperCase() !== 'POST') return json(bad('This door takes POST.', 405))
+    if (url.pathname !== SEND_PATH) return undefined
+    if (asker !== 'program') return json(bad('This route answers another module’s server on this computer, and nothing in a browser.', 403))
+    if (request.method.toUpperCase() !== 'POST') return json(bad('This route takes POST.', 405))
+    const vouched = await vouch(request.headers)
+    if (!vouched.ok) return json(bad(`Nothing was sent: the sender did not prove which module it is. ${vouched.why}`, 403))
     const read = await readJsonRequest(request)
-    return json(read.ok ? await factorySend(deps, carried, read.body, file()) : bad(read.error, read.status))
+    return json(read.ok ? await sendRun(deps, vouched.module, read.body) : bad(read.error, read.status))
   }
 }
 
-/** The same door as node middleware, `(request, response, next)`: what Vite mounts. */
-export function factoryHandler(deps: Deps = REAL, file: () => string = () => keyFile()): DoorHandler {
-  return beforeHandler(factoryBefore(deps, file))
+/** The same route as node middleware, `(request, response, next)`: what Vite mounts. */
+export function sendHandler(deps: Deps = REAL, vouch: Vouch = VOUCH): DoorHandler {
+  return beforeHandler(sendBefore(deps, vouch))
 }
 
-/** Make the key on the first start, on either server; a start without one says so and goes on. */
-export function startFactory(): void {
-  const made = ensureKey()
-  if (!made.ok) console.error(`kehikot.review: Factory cannot send reviews: ${made.error}`)
-}
-
-/** The Vite plugin: makes the key on the first start, then answers Factory's send. Before `doors()` in vite.config.ts. */
-export function factoryDoor(deps: Deps = REAL) {
-  return beforeDoors(factoryBefore(deps), { name: 'kehikot-review-factory-door', setup: startFactory })
+/** The Vite plugin: answers the send. Before `doors()` in vite.config.ts. */
+export function sendDoor(deps: Deps = REAL) {
+  return beforeDoors(sendBefore(deps), { name: 'kehikot-review-send-door' })
 }

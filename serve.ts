@@ -2,7 +2,7 @@
 import { run } from 'kehikot-module-protocol/run'
 
 import { BUILD, MANIFEST, TICKET, answer, ours, stream } from './doors.ts'
-import { factoryBefore, startFactory } from './factory/door.ts'
+import { sendBefore } from './send/door.ts'
 import { ID, PREFERRED_PORT, servingAt } from './manifest.ts'
 
 /**
@@ -12,14 +12,13 @@ import { ID, PREFERRED_PORT, servingAt } from './manifest.ts'
  *
  * Nothing this module says is decided here. The doors are `answer` in
  * `doors.ts`, mounted by the protocol's `run` exactly as `doors()` mounts them
- * on Vite, with the same `ours` (the skills' SKILL.md files too). Factory's
- * send is `factoryBefore` in `factory/door.ts`, asked before the doors here as
- * `factoryDoor()` asks it on Vite: one function on both servers, so the two
+ * on Vite, with the same `ours` (the skills' SKILL.md files too). A run's
+ * send is `sendBefore` in `send/door.ts`, asked before the doors here as
+ * `sendDoor()` asks it on Vite: one function on both servers, so the two
  * cannot disagree about who may send a review. A build that is not this
  * checkout's is never served: `run` answers the page with a 503 saying which
  * commit each is, and the command to run.
  */
-startFactory()
 
 const running = await run({
   id: ID,
@@ -30,7 +29,7 @@ const running = await run({
   stream,
   build: BUILD,
   ticket: TICKET,
-  before: factoryBefore(),
+  before: sendBefore(),
   ours,
 })
 

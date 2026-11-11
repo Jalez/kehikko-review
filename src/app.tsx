@@ -155,7 +155,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
 /** The second line under the unhosted cover: what this module is, and how a change gets here. */
 export const UNHOSTED =
   'Review is a module for a Kehikot canvas: place it there, select a pull request or merge request, and its review is written '
-  + 'here — with Source and Diff beside it to show the lines each point is about.'
+  + 'here — beside the modules that show code, which show the lines each point is about.'
 
 function Note({ children }: { children: React.ReactNode }) {
   return <p className="text-[0.7rem] leading-4 text-muted-foreground">{children}</p>

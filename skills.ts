@@ -17,7 +17,7 @@ import { PREFERRED_PORT } from './port.ts'
  * bound to), and where it says `{{version}}` the skill's version — the first twelve hex digits of the
  * sha256 of the text with the origin filled in and `{{version}}` unfilled, so a changed template or a
  * moved port makes an installed copy "outdated" and the host's sync brings it level. The same scheme
- * as Factory's and the Claude module's skills. The person installs them from Kehikot's Skills window;
+ * as other modules' skills. The person installs them from Kehikot's Skills window;
  * this module installs nothing.
  *
  * Each works through this module's own MCP door (`mcp__review__…`), and its `allowed-tools` names

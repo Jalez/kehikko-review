@@ -1,29 +1,30 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { TICKET, answer, type Deps } from '../doors.ts'
-import type { DoorRequest } from 'kehikot-module-protocol/serve'
+import { SERVICE_CALLER_HEADER, SERVICE_PASS_HEADER } from 'kehikot-module-protocol'
+import { vouchCaller, type DoorRequest } from 'kehikot-module-protocol/serve'
 
-import { FACTORY_PATH, factoryHandler, factorySend } from '../factory/door.ts'
-import { KEY_FILE, KEY_HEADER, ensureKey } from '../factory/key.ts'
 import { locate } from '../forge/locate.ts'
 import { forget } from '../forge/read.ts'
 import type { Run } from '../forge/run.ts'
 import { proposalBody } from '../review/draft.ts'
 import type { Draft } from '../review/shape.ts'
+import { SEND_PATH, sendHandler, sendRun, type Vouch } from '../send/door.ts'
 import { readDraftFor } from '../store.ts'
 
 import { GH_PULL, GH_URL, HEAD, PATCH, fake, githubReads, isPost, pathOf, sentBody } from './fake.ts'
 
 /**
- * The send only Factory can make: a run's comments and its proposal, posted without the person —
+ * The send only a module's server that proves who it is can make (the `send` route of the
+ * `review.drafts` service): a run's comments and its proposal, posted without the person —
  * and only when the change is two-way, touches nothing people see, has not moved on, and every
  * required point is matched by a request for changes. Every refusal is asserted with nothing
  * posted; the tracker here is a function that records what it would have been sent.
  */
-const home = mkdtempSync(join(tmpdir(), 'kehikko-review-factory-'))
+const home = mkdtempSync(join(tmpdir(), 'kehikko-review-run-send-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
 let n = 0
 const project = () => mkdtempSync(join(home, `p${(n += 1)}-`))
@@ -52,12 +53,9 @@ const PROPOSE = (run: string, over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-/** A change whose head and state can move under the test, a key in a scratch folder, and a draft with the person's work and a run's. */
+/** A change whose head and state can move under the test, and a draft with the person's work and a run's. */
 async function ready(options: { proposal?: Record<string, unknown> | null; points?: Record<string, unknown>[] } = {}) {
   const dir = project()
-  const file = join(home, `keys${n}`, KEY_FILE)
-  const made = ensureKey(file)
-  if (!made.ok) throw new Error(made.error)
   const change = { head: HEAD, state: 'open', merged: false }
   const runner = fake((run: Run) => {
     if (isPost(run)) return reviewOk
@@ -87,19 +85,20 @@ async function ready(options: { proposal?: Record<string, unknown> | null; point
   }
   if (options.proposal !== null) await tool('propose_review', { ...base, ...PROPOSE('run-1', options.proposal ?? {}) })
 
-  const send = (body: Record<string, unknown> = { project: dir, change: GH_URL, run: 'run-1' }, key: string | null = made.key) => factorySend(deps, key, body, file)
+  const send = (body: Record<string, unknown> = { project: dir, change: GH_URL, run: 'run-1' }) => sendRun(deps, CALLER, body)
   const draft = (): Draft => {
     const got = readDraftFor(dir, locate(GH_URL)!)
     if (!got.ok) throw new Error(got.error)
     return got.value
   }
   const posts = () => runner.calls.filter(isPost)
-  return { dir, file, key: made.key, change, runner, deps, tool, base, send, draft, posts }
+  return { dir, change, runner, deps, tool, base, send, draft, posts }
 }
 
+const CALLER = 'kehikot.caller'
 const errorOf = (reply: { body: unknown }) => (reply.body as { error?: string }).error ?? ''
 
-describe('what Factory may send', () => {
+describe('what a run may send', () => {
   test('the run’s comments and its proposal, and nothing of the person’s', async () => {
     const w = await ready()
     const before = w.draft()
@@ -119,7 +118,7 @@ describe('what Factory may send', () => {
     expect(after.verdict).toBe('comment')
     expect(after.proposal?.sent).toEqual({ at: '2026-10-21T12:00:00.000Z', head: HEAD })
     expect(after.sent.at(-1)).toMatchObject({ verdict: 'request-changes', head: HEAD, comments: 2, summary: proposalBody(before.proposal!) })
-    expect(after.sent.at(-1)!.notes[0]).toContain('Sent by an automated run for review run run-1')
+    expect(after.sent.at(-1)!.notes[0]).toContain(`Sent by ${CALLER} for review run run-1`)
   })
 
   test('a run with nothing required may approve', async () => {
@@ -139,7 +138,7 @@ describe('what Factory may send', () => {
   })
 })
 
-describe('what Factory may not send, with nothing posted', () => {
+describe('what a run may not send, with nothing posted', () => {
   test('a one-way change', async () => {
     const w = await ready({ proposal: { door: 'one-way' } })
     const reply = await w.send()
@@ -207,19 +206,6 @@ describe('what Factory may not send, with nothing posted', () => {
     expect(w.posts()).toEqual([])
   })
 
-  test('a wrong key, no key, and a key file that is not there', async () => {
-    const w = await ready()
-    for (const key of [null, '', 'a'.repeat(64), w.key.slice(0, 63), `${w.key}0`]) {
-      const reply = await w.send(undefined, key)
-      expect(reply.status).toBe(403)
-    }
-    rmSync(w.file)
-    const gone = await w.send()
-    expect(gone.status).toBe(503)
-    expect(w.posts()).toEqual([])
-    expect(w.runner.calls.filter((c) => !isPost(c)).length).toBeGreaterThan(0)
-  })
-
   test('a body that does not say which project, change and run', async () => {
     const w = await ready()
     for (const body of [{}, { project: w.dir, change: GH_URL }, { project: w.dir, change: GH_URL, run: '../x' }, { project: w.dir, change: 'gh#46', run: 'run-1' }, { project: 'relative', change: GH_URL, run: 'run-1' }]) {
@@ -242,15 +228,15 @@ describe('the route', () => {
     const w = await ready()
     const calls = w.runner.calls.length
     for (const ticket of [TICKET, null]) {
-      expect((await answer('POST', FACTORY_PATH, none, { project: w.dir, change: GH_URL, run: 'run-1' }, ticket, w.deps))?.status).toBe(404)
+      expect((await answer('POST', SEND_PATH, none, { project: w.dir, change: GH_URL, run: 'run-1' }, ticket, w.deps))?.status).toBe(404)
     }
-    expect((await answer('GET', FACTORY_PATH, none, null, null, w.deps))?.status).toBe(404)
+    expect((await answer('GET', SEND_PATH, none, null, null, w.deps))?.status).toBe(404)
     expect(w.runner.calls.length).toBe(calls)
   })
 
   test('the MCP door never gains a send', async () => {
     const w = await ready()
-    for (const name of ['factory_send', 'send', 'send_review']) await expect(w.tool(name, { ...w.base, run: 'run-1' })).rejects.toThrow('no tool')
+    for (const name of ['send_run', 'send', 'send_review']) await expect(w.tool(name, { ...w.base, run: 'run-1' })).rejects.toThrow('no tool')
     expect(w.posts()).toEqual([])
   })
 })
@@ -260,7 +246,7 @@ function request(method: string, headers: Record<string, string>, body?: unknown
   const listeners: Record<string, ((chunk?: Uint8Array) => void)[]> = {}
   const made = {
     method,
-    url: `${FACTORY_PATH}?x=1`,
+    url: `${SEND_PATH}?x=1`,
     headers,
     on(event: string, listener: (chunk?: Uint8Array) => void) {
       ;(listeners[event] ??= []).push(listener)
@@ -301,11 +287,25 @@ function response() {
   }
 }
 
+const PASS = 'p'.repeat(40)
+const PROVED = { [SERVICE_CALLER_HEADER]: CALLER, [SERVICE_PASS_HEADER]: PASS }
+
+/** A vouch that says yes or no, and counts how often it was asked. */
+function vouching(yes: boolean): Vouch & { asked: number } {
+  const vouch = (async () => {
+    vouch.asked += 1
+    return yes ? { ok: true as const, module: CALLER } : { ok: false as const, why: `${CALLER} did not vouch for that pass.` }
+  }) as unknown as Vouch & { asked: number }
+  vouch.asked = 0
+  return vouch
+}
+
 describe('the middleware', () => {
-  test('without the header the request is not this route’s: it goes on, unread', async () => {
+  test('another path is not this route’s: it goes on, unread, and nobody is asked to vouch', async () => {
     const w = await ready()
+    const vouch = vouching(true)
     const { res, out } = response()
-    const asked = request('POST', { 'content-type': 'application/json' }, { project: w.dir })
+    const asked = { ...request('POST', { ...PROVED, 'content-type': 'application/json' }, { project: w.dir }), url: '/api/send' }
     const read: string[] = []
     const on = asked.on.bind(asked)
     ;(asked as unknown as { on: typeof on }).on = ((event: string, listener: () => void) => {
@@ -313,54 +313,109 @@ describe('the middleware', () => {
       return on(event as 'end', listener)
     }) as typeof on
     const went = Promise.withResolvers<void>()
-    factoryHandler(w.deps, () => w.file)(asked, res, () => went.resolve())
+    sendHandler(w.deps, vouch)(asked, res, () => went.resolve())
     await went.promise
     expect(out.status).toBe(0)
     /* Nothing listened for the body: the doors and Vite get it whole. */
     expect(read).toEqual([])
-    /* Another path, header or not, is not looked at either. */
-    const other = Promise.withResolvers<void>()
-    factoryHandler(w.deps, () => w.file)({ ...request('POST', { [KEY_HEADER]: w.key }), url: '/api/send' }, res, () => other.resolve())
-    await other.promise
+    expect(vouch.asked).toBe(0)
   })
 
-  test('a browser asking — another origin or this app’s own page — is refused', async () => {
+  test('a browser asking — another origin or this app’s own page — is refused before anybody is asked to vouch', async () => {
     const w = await ready()
+    const vouch = vouching(true)
     for (const headers of [{ origin: 'http://evil.example' }, { origin: 'http://127.0.0.1:8000', host: '127.0.0.1:8000' }, { 'sec-fetch-site': 'same-origin' }, { 'sec-fetch-site': 'cross-site' }] as Record<string, string>[]) {
       const { res, out } = response()
-      factoryHandler(w.deps, () => w.file)(request('POST', { ...headers, [KEY_HEADER]: w.key, 'content-type': 'application/json' }, { project: w.dir, change: GH_URL, run: 'run-1' }), res, () => {})
+      sendHandler(w.deps, vouch)(request('POST', { ...headers, ...PROVED, 'content-type': 'application/json' }, { project: w.dir, change: GH_URL, run: 'run-1' }), res, () => {})
       await out.done.promise
       expect(out.status).toBe(403)
     }
+    expect(vouch.asked).toBe(0)
     expect(w.posts()).toEqual([])
   })
 
   test('only POST', async () => {
     const w = await ready()
     const { res, out } = response()
-    factoryHandler(w.deps, () => w.file)(request('GET', { [KEY_HEADER]: w.key }), res, () => {})
+    sendHandler(w.deps, vouching(true))(request('GET', PROVED), res, () => {})
     await out.done.promise
     expect(out.status).toBe(405)
   })
 
-  test('Factory, a program with the key, sends', async () => {
+  test('a sender that does not prove which module it is is refused, and nothing is posted', async () => {
     const w = await ready()
     const { res, out } = response()
-    factoryHandler(w.deps, () => w.file)(request('POST', { [KEY_HEADER]: w.key, 'content-type': 'application/json' }, { project: w.dir, change: GH_URL, run: 'run-1' }), res, () => {})
+    sendHandler(w.deps, vouching(false))(request('POST', { ...PROVED, 'content-type': 'application/json' }, { project: w.dir, change: GH_URL, run: 'run-1' }), res, () => {})
+    await out.done.promise
+    expect(out.status).toBe(403)
+    expect(JSON.parse(out.body).error).toContain('did not prove which module it is')
+    expect(w.posts()).toEqual([])
+    expect(w.draft().proposal?.sent).toBeUndefined()
+  })
+
+  test('a module’s server that proves who it is sends', async () => {
+    const w = await ready()
+    const { res, out } = response()
+    sendHandler(w.deps, vouching(true))(request('POST', { ...PROVED, 'content-type': 'application/json' }, { project: w.dir, change: GH_URL, run: 'run-1' }), res, () => {})
     await out.done.promise
     expect(out.status).toBe(200)
     expect(out.headers['content-type']).toContain('application/json')
     expect(out.headers['cache-control']).toBe('no-store')
     expect(JSON.parse(out.body)).toMatchObject({ ok: true, report: { complete: true } })
     expect(w.posts()).toHaveLength(1)
+    expect(w.draft().sent.at(-1)!.notes[0]).toContain(`Sent by ${CALLER}`)
   })
 
   test('a body that is not JSON is refused', async () => {
     const w = await ready()
     const { res, out } = response()
-    factoryHandler(w.deps, () => w.file)(request('POST', { [KEY_HEADER]: w.key, 'content-type': 'text/plain' }, 'x'), res, () => {})
+    sendHandler(w.deps, vouching(true))(request('POST', { ...PROVED, 'content-type': 'text/plain' }, 'x'), res, () => {})
     await out.done.promise
     expect(out.status).toBe(415)
+    expect(w.posts()).toEqual([])
+  })
+})
+
+describe('the protocol’s vouch, with a registry and a caller that answer here', () => {
+  /** A registry naming the caller at an address, and the caller's answer about the pass. */
+  function world(minted: boolean) {
+    const registry = join(home, `registry${(n += 1)}`)
+    mkdirSync(registry, { recursive: true })
+    writeFileSync(join(registry, `${CALLER}.json`), JSON.stringify({ url: 'http://127.0.0.1:47999/app', dir: '' }))
+    const asked: string[] = []
+    const fetch = (async (url: string | URL | Request) => {
+      asked.push(String(url))
+      return Response.json({ ok: true, minted })
+    }) as unknown as typeof globalThis.fetch
+    const vouch: Vouch = (headers) => vouchCaller(headers, { registry, fetch })
+    return { vouch, asked }
+  }
+
+  test('a pass the caller minted sends, asked of the caller at its registered address', async () => {
+    const w = await ready()
+    const v = world(true)
+    const { res, out } = response()
+    sendHandler(w.deps, v.vouch)(request('POST', { ...PROVED, 'content-type': 'application/json' }, { project: w.dir, change: GH_URL, run: 'run-1' }), res, () => {})
+    await out.done.promise
+    expect(out.status).toBe(200)
+    expect(v.asked).toHaveLength(1)
+    expect(v.asked[0]).toStartWith('http://127.0.0.1:47999/api/kehikot/server-pass?pass=')
+    expect(w.posts()).toHaveLength(1)
+  })
+
+  test('a pass it did not mint, no pass, or a module not registered: refused, nothing posted', async () => {
+    const w = await ready()
+    for (const [headers, minted] of [
+      [PROVED, false],
+      [{ [SERVICE_CALLER_HEADER]: CALLER }, true],
+      [{ [SERVICE_CALLER_HEADER]: 'kehikot.stranger', [SERVICE_PASS_HEADER]: PASS }, true],
+      [{}, true],
+    ] as [Record<string, string>, boolean][]) {
+      const { res, out } = response()
+      sendHandler(w.deps, world(minted).vouch)(request('POST', { ...headers, 'content-type': 'application/json' }, { project: w.dir, change: GH_URL, run: 'run-1' }), res, () => {})
+      await out.done.promise
+      expect(out.status).toBe(403)
+    }
     expect(w.posts()).toEqual([])
   })
 })
