@@ -12,6 +12,9 @@ import { useKeeps } from '@/wire/keeps'
 import { useKehikot, type Host } from '@/wire/use-kehikot'
 import { OpenAddressContext } from '@/view/out-link'
 
+/** What the host's cover says while this page reads the change it reviews (protocol 2.84.0). */
+export const LOADING_REVIEW = 'Loading the review…'
+
 export function App() {
   return <Screen host={useKehikot()} />
 }
@@ -70,26 +73,31 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
 
   /*
    * The host holds its cover until this page says what it shows is drawn (2.70.0), so the first
-   * "Asking…" is under the cover rather than a flash: said once, when the first answer is on screen —
-   * a cover that is not a wait, the sentence for no selection or a refusal, what each selected ref
-   * is, or the change and its review read. Never gated on being visible: the host keeps a covered
-   * page hidden, and waiting for it to be shown would hold the cover for the whole timeout.
+   * "Asking…" is under the cover rather than a flash: said when the answer is on screen — a cover
+   * that is not a wait, the sentence for no selection or a refusal, what each selected ref is, or
+   * the change and its review read. A new pick is not drawn until its own answer is, and the host
+   * may cover it again in this module's words (2.84.0). Never gated on being visible: the host keeps
+   * a covered page hidden, and waiting for it to be shown would hold the cover for the whole timeout.
    */
-  const [reviewDrawn, setReviewDrawn] = useState(false)
-  const onDrawn = useCallback(() => setReviewDrawn(true), [])
+  const drawnKey = row?.at === 'change' ? `${projectKey(host)?.key ?? ''}|${row.url}` : null
+  const [reviewDrawnFor, setReviewDrawnFor] = useState<string | null>(null)
+  const reviewDrawn = drawnKey !== null && reviewDrawnFor === drawnKey
+  const onDrawn = useCallback(() => setReviewDrawnFor(drawnKey), [drawnKey])
   const drawn = cover
     ? cover !== 'waiting' && cover !== 'loading' && cover !== 'stale'
     : host.where === 'hosted' &&
       (!host.selection.length ||
         Boolean(refused) ||
         (row?.at === 'change' ? reviewDrawn : host.selection.every((ref) => Object.hasOwn(seen, ref) && seen[ref]?.at !== 'asking')))
-  const saidDrawn = useRef(false)
-  const { ready } = host
+  const { ready, loading } = host
+  /* Said when it changes, not again for the same standing. */
+  const said = useRef<boolean | null>(null)
   useEffect(() => {
-    if (!drawn || saidDrawn.current || !ready) return
-    saidDrawn.current = true
-    ready()
-  }, [drawn, ready])
+    if (said.current === drawn) return
+    said.current = drawn
+    if (drawn) ready?.()
+    else loading?.(LOADING_REVIEW)
+  }, [drawn, ready, loading])
 
   return (
     /* `min-w-0` and `overflow-x-hidden` on the one scroller: nothing on this
