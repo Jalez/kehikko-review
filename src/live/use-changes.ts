@@ -15,7 +15,7 @@ import { readSeen, type Seen, type SeenAll } from './changes.ts'
  * yet", and the reading moving is the only signal that the read landed.
  *
  * `detail: 'detail'` although a summary row would be enough to begin: it is
- * the question Diff asks about the same refs, so the host makes one read at
+ * the question a diff viewer asks about the same refs, so the host makes one read at
  * the tracker for both modules, and the head commit that comes with it tells
  * this page when a change has been pushed to.
  */

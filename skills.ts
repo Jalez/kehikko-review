@@ -27,8 +27,8 @@ import { PREFERRED_PORT } from './port.ts'
  *
  * ## needs (protocol 2.12.0): none
  *
- * None of the three needs another module on the kehikko. Source and Diff are where a person follows a
- * point's code reference, and Checklist is where a change's checklist may be held — all welcome, none
+ * None of the three needs another module on the kehikko. A file or diff viewer is where a person follows a
+ * point's code reference, and a checklist module is where a change's checklist may be held — all welcome, none
  * required: the skills read the change, its diff and the files through Review and the project itself,
  * and say so when a checklist is not there to answer. So none is kehikko-bound, and each is offered
  * wherever Review is installed.

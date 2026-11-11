@@ -53,8 +53,8 @@ export interface Host {
    */
   location?: SharedLocation | null
   /**
-   * Point the kehikko at a place in a change's code (`location.set`): Source opens the file there and
-   * Diff scrolls there. `null` when nothing frames the page or the host did not answer; never rejects.
+   * Point the kehikko at a place in a change's code (`location.set`): a file viewer opens the file there and
+   * a diff viewer scrolls there. `null` when nothing frames the page or the host did not answer; never rejects.
    */
   locate?(location: CodeLocation | null, intent?: LocationIntent): Promise<LocationSetResult | null>
   /**

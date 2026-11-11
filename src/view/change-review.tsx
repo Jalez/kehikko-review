@@ -26,7 +26,7 @@ import { OutLink } from './out-link.tsx'
  * One change, being reviewed: its header, and the review of it as a document.
  *
  * Review draws no diff. A point's code reference is a place in the change's code; pressing it says
- * so to the kehikko (`location.set`, intent `show`), and Source opens the file there while Diff
+ * so to the kehikko (`location.set`, intent `show`), and a file viewer opens the file there while a diff viewer
  * shows the old and the new at that spot. The other way round, somebody asking for a comment at a
  * place (`context.location`, intent `comment`) opens "New point at path:line" here. The server still
  * checks every point against the change's real diff when it is written.

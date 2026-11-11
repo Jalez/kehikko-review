@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { HELP_LIMITS, MODULE_ID, REVIEW_DRAFTS, SERVICES, helpOf, manifestSchema, moduleFolder } from 'kehikot-module-protocol'
+import { HELP_LIMITS, MODULE_FOLDERS, MODULE_ID, REVIEW_DRAFTS, SERVICES, helpOf, manifestSchema, moduleDir, moduleFolder } from 'kehikot-module-protocol'
+import { basename } from 'node:path'
 
 import { REAL, answer } from '../doors.ts'
 import { SEND_PATH } from '../send/door.ts'
@@ -72,6 +73,14 @@ describe('How to use (protocol 2.52.0)', () => {
 
   test('says what it shows, how to use it and what agents can do', () => {
     expect(HELP.sections.map((section) => section.title)).toEqual(expect.arrayContaining(['What it shows', 'How to use it', 'What agents can do']))
+  })
+})
+
+describe('the module.folders service (protocol 2.85.0)', () => {
+  test('declares the folder the store writes, authored and not derived', () => {
+    const parsed = SERVICES[MODULE_FOLDERS].schema.safeParse(MANIFEST.services?.[MODULE_FOLDERS])
+    expect(parsed.success).toBe(true)
+    expect(parsed.data?.folders.map((one) => [one.folder, one.derived])).toEqual([[basename(moduleDir('/p', ID) ?? ''), false]])
   })
 })
 

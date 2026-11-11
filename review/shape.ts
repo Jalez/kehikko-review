@@ -81,7 +81,7 @@ export interface Meta {
   ruling: Ruling
   /** The judge's one-line reason. */
   reason: string
-  /** Checklist items the point bears on. */
+  /** The checklist items the point bears on. */
   checklist?: string[]
   /**
    * The head the change had when this comment was written, as the forge said. Stamped by the

@@ -9,7 +9,7 @@
  * failure they cannot detect is the one where a file was never drawn: a file
  * with no hunks is visibly odd, a file with a strange path is visibly strange,
  * and a file that is simply absent looks exactly like a file that was never
- * changed. That is the same rule `collect.ts` keeps in References, for the same
+ * changed. That is the same rule a tracker listing keeps, for the same
  * reason, and it is why there is no `filter` in this file and no `continue` over
  * a header that disappointed us.
  *
