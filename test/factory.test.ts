@@ -119,7 +119,7 @@ describe('what Factory may send', () => {
     expect(after.verdict).toBe('comment')
     expect(after.proposal?.sent).toEqual({ at: '2026-10-21T12:00:00.000Z', head: HEAD })
     expect(after.sent.at(-1)).toMatchObject({ verdict: 'request-changes', head: HEAD, comments: 2, summary: proposalBody(before.proposal!) })
-    expect(after.sent.at(-1)!.notes[0]).toContain('Sent by Factory for review run run-1')
+    expect(after.sent.at(-1)!.notes[0]).toContain('Sent by an automated run for review run run-1')
   })
 
   test('a run with nothing required may approve', async () => {

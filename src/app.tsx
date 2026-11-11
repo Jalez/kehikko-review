@@ -111,7 +111,7 @@ export function Screen({ host, api = realApi }: { host: Host; api?: Api }) {
       <div hidden={cover !== null} className={cover ? undefined : 'contents'}>
       {host.where === 'hosted' && !host.selection.length ? (
         <Note>
-          Nothing is selected. Select a pull request or merge request anywhere on the canvas — in References, Journeys or any module that
+          Nothing is selected. Select a pull request or merge request anywhere on the canvas — in any module that
           lists them — and your review of it appears here.
         </Note>
       ) : null}

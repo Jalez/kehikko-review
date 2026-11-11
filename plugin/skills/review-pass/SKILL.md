@@ -21,7 +21,7 @@ The person typed `/review-pass $ARGUMENTS`. Review the change ONCE, carefully, a
 2. `read_review`: what is already there. The person's points, and points they kept, are theirs: never repeat them, never contradict them silently.
 3. `read_diff` for the whole change (no `commit`), file by file with `path` when it is long. Cite only the line numbers it prints.
 4. Read the files around the change in the project (Read, Grep, Glob) where a claim depends on code outside the diff: callers, tests, types, the project's AGENTS.md / CLAUDE.md. Do not switch branches or change any file.
-5. The checklist: the description's task list (`- [ ]`), and the change's checklist in Kehikot's Checklist module when its tools are here. If there is none, say "No checklist was held against this change." in the summary.
+5. The checklist: the description's task list (`- [ ]`), and the change's checklist in a checklist module when its tools are here. If there is none, say "No checklist was held against this change." in the summary.
 
 ## 3. Write the points
 

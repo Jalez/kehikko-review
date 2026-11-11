@@ -22,14 +22,14 @@ export const HELP = {
         'Top to bottom: the verdict and summary, with a review run’s proposal beside them; the points, each on exact lines with the quoted code, its words, severity and evidence; the evidence kept beside the review; and replies, on a change you wrote.',
         'Each point says who wrote it and where it stands: draft, kept, sent or resolved.',
         'Before / after, in the View switch, pairs the pictures posted in the change’s description and comments.',
-        'Review draws no diff: press a point’s code reference and Source opens the file there while Diff scrolls to it.',
+        'Review draws no diff: press a point’s code reference and a file viewer, if one is on the kehikko, opens the file there while a diff viewer scrolls to it.',
       ],
     },
     {
       title: 'How to use it',
       points: [
-        'Pick a pull or merge request in References, Journeys or any other module.',
-        'Press New point…, or point at a line in Source or Diff and ask for a comment there.',
+        'Pick a pull or merge request in any module that lists them.',
+        'Press New point…, or point at a line in a file or diff viewer and ask for a comment there.',
         'Keep an agent’s draft point you agree with, or edit or remove it. Once kept or edited it is yours.',
         'Set the verdict and summary, then press Send review…: it shows what will be posted, to which change and under which login. Post it sends; Not yet goes back.',
         'Mark a sent point resolved once its author dealt with it.',

@@ -117,7 +117,7 @@
     },
     {
       "title": "Write a point on a line",
-      "body": "Press New point, or point at a line in Source or Diff and ask for a comment there. Each point keeps the quoted code, its words and its evidence.",
+      "body": "Press New point, or point at a line in a file or diff viewer and ask for a comment there. Each point keeps the quoted code, its words and its evidence.",
       "art": {
         "label": "a line pointed at in the code, and a new point card on it",
         "shapes": [

@@ -1033,7 +1033,7 @@ describe('a review run, on the page', () => {
     expect(box.textContent).toContain('what people see')
     cleanup()
     await opened({ proposal: { ...PROPOSAL, sent: { at: AT, head: HEAD } } })
-    expect(screen.getByTestId('proposal').textContent).toContain('Sent by Factory')
+    expect(screen.getByTestId('proposal').textContent).toContain('Sent by an automated run')
   })
 })
 

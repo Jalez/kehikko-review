@@ -376,7 +376,7 @@ export async function deliver(deps: Deps, projectPath: string | null, target: Ta
           ? { ...was, proposal: { ...was.proposal, sent: { at: deps.now(), head: made.plan.head } } }
           : was
     }
-    const notes = by.kind === 'run' ? [`Sent by Factory for review run ${by.run}, without the person.`, ...report.notes] : report.notes
+    const notes = by.kind === 'run' ? [`Sent by an automated run for review run ${by.run}, without the person.`, ...report.notes] : report.notes
     return reached
       ? logSend(
           settled,
@@ -656,7 +656,7 @@ function listed() {
     {
       name: 'read_focus',
       description:
-        'What the person is looking at in Review, in this project: the change its page has open, and the place in that change’s code somebody last pointed at (a file and line, from Source, Diff or a point’s code reference), with why — to look there, or to start a point there. '
+        'What the person is looking at in Review, in this project: the change its page has open, and the place in that change’s code somebody last pointed at (a file and line, from a file or diff viewer or a point’s code reference), with why — to look there, or to start a point there. '
         + 'Use it when you were asked to review “the picked change” or to write a point “here”.',
       inputSchema: { type: 'object', properties: { ...PROJECT }, required: ['project'] },
     },
@@ -688,7 +688,7 @@ function listed() {
   ]
 }
 
-const RUN_SCHEMA = { type: 'string', description: 'The review run’s id, as Factory named it: letters, digits and . _ : -, at most 80.' } as const
+const RUN_SCHEMA = { type: 'string', description: 'The review run’s id, as the run that sent it named it: letters, digits and . _ : -, at most 80.' } as const
 
 /** The contract's point metadata (C4), as an MCP schema. */
 const META_SCHEMA = {
@@ -710,7 +710,7 @@ const META_SCHEMA = {
     challenge: { type: 'string', description: 'The strongest honest case made against the point, if any.' },
     ruling: { type: 'string', enum: [...RULINGS] },
     reason: { type: 'string', description: 'The judge’s one-line reason.' },
-    checklist: { type: 'array', items: { type: 'string' }, description: 'Checklist items the point bears on.' },
+    checklist: { type: 'array', items: { type: 'string' }, description: 'checklist items the point bears on.' },
   },
   required: ['run', 'severity', 'evidence', 'ruling', 'reason'],
 } as const
