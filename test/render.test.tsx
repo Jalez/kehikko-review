@@ -755,11 +755,11 @@ describe('this app’s own server: the ticket a write carries, and the cover whe
     await realApi.addComment('/p', GH_URL, { view: 'all', commit: HEAD, path: 'src/one.ts', side: 'new', line: 11, body: 'why?' })
     await realApi.draft('/p', GH_URL)
     const [write, read] = calls
-    expect(write?.url).toBe('./api/comment')
+    expect(write?.url).toBe('/api/comment')
     expect(write?.init?.method).toBe('POST')
     expect((write?.init?.headers as Record<string, string>)['x-module-ticket']).toBe('the-ticket')
     expect(JSON.parse(String(write?.init?.body))).toMatchObject({ projectPath: '/p', url: GH_URL, path: 'src/one.ts', line: 11, body: 'why?' })
-    expect(read?.url).toBe(`./api/draft?${new URLSearchParams({ projectPath: '/p', url: GH_URL })}`)
+    expect(read?.url).toBe(`/api/draft?${new URLSearchParams({ projectPath: '/p', url: GH_URL })}`)
     expect((read?.init?.headers as Record<string, string>)['x-module-ticket']).toBeUndefined()
   })
 
@@ -802,7 +802,7 @@ describe('this app’s own server: the ticket a write carries, and the cover whe
       await new Promise((resolve) => setTimeout(resolve, 30))
     })
     expect(cover()).toBeNull()
-    expect(calls.at(-1)?.url).toBe('./healthz')
+    expect(calls.at(-1)?.url).toBe('/healthz')
     expect(view.querySelector('[aria-label="The review"]')).toBe(file)
   })
 
